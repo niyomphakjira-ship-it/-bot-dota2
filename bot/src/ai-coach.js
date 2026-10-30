@@ -235,8 +235,8 @@ export async function askDotaCoach(question, discordUserId) {
   }
 }
 
-// ระบบ Autonomous AI Agent: รองรับ Function Calling + บริบทแชทย้อนหลัง + บทสนทนาตอบกลับทันใจ (< 2 วินาที)
-export async function runAutonomousAgent(userInput, discordUserId, actions, chatHistory = []) {
+// ระบบ Autonomous AI Agent: รองรับ Function Calling + บริบทแชทย้อนหลัง + บริบทสถิติสด + บทสนทนาตอบกลับทันใจ (< 2 วินาที)
+export async function runAutonomousAgent(userInput, discordUserId, actions, chatHistory = [], extraContext = '') {
   const client = getClient();
   if (!client) {
     return '⚠️ ระบบ AI ยังไม่พร้อมใช้งาน: กรุณาใส่ `GEMINI_API_KEY` ใน Render Dashboard (Environment Variables) ครับ';
@@ -247,12 +247,20 @@ export async function runAutonomousAgent(userInput, discordUserId, actions, chat
     if (chatHistory && chatHistory.length > 0) {
       promptText += `[บริบทการสนทนาล่าสุดในห้อง Discord]:\n${chatHistory.join('\n')}\n\n`;
     }
+    if (extraContext) {
+      promptText += `${extraContext}\n\n`;
+    }
     promptText += `[ข้อความล่าสุดของผู้ใช้]:\n${userInput || 'สวัสดี'}`;
+
+    // ถ้ามี extraContext (เช่น มีข้อมูลสถิติแมตช์ที่ดึงมาล่วงหน้าแล้ว) ให้ตัด inspect_match ออก เพื่อให้ Gemini สร้างข้อความวิเคราะห์ละเอียด แทนการเรียก Tool เปล่าๆ
+    const tools = extraContext
+      ? AGENT_TOOLS.filter((t) => t.name !== 'inspect_match')
+      : AGENT_TOOLS;
 
     const { res } = await generateWithFallback({
       prompt: promptText,
       systemInstruction: SYSTEM_INSTRUCTION,
-      tools: AGENT_TOOLS,
+      tools,
     });
 
     const functionCalls = res.functionCalls || [];

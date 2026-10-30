@@ -337,6 +337,66 @@ async function handleLastMatchCommand(discordUserId, rawArg, replyTarget) {
   }
 }
 
+function buildMatchCardEmbed(data, targetQuery) {
+  const winTeam = data.radiantWin ? 'Radiant Victory' : 'Dire Victory';
+  const scoreText = `Radiant **${data.radiantScore}** — **${data.direScore}** Dire · ${data.duration}`;
+
+  const q = (targetQuery || '').toLowerCase().trim();
+  let highlightedPlayer = null;
+  if (q) {
+    highlightedPlayer = data.players.find(
+      (p) =>
+        (p.hero && q.includes(p.hero.toLowerCase())) ||
+        (p.name && q.includes(p.name.toLowerCase())) ||
+        p.hero.toLowerCase().includes(q) ||
+        p.name.toLowerCase().includes(q)
+    );
+
+    if (!highlightedPlayer && (q.includes('กลาง') || q.includes('mid'))) {
+      highlightedPlayer = data.players.find(
+        (p) => p.lane === 'MID_LANE' || p.role === 'MID'
+      );
+    }
+  }
+
+  let highlightText = '';
+  if (highlightedPlayer) {
+    const outcome = highlightedPlayer.won ? '🏆 ชนะ' : '💀 แพ้';
+    const stratzLine =
+      (highlightedPlayer.lane ? `• **เลน:** ${highlightedPlayer.lane}\n` : '') +
+      (highlightedPlayer.networth ? `• **Networth:** \`${highlightedPlayer.networth.toLocaleString()}\` · **GPM:** \`${highlightedPlayer.gpm}\`\n` : '') +
+      (highlightedPlayer.lastHits ? `• **CS (Creep Score):** \`${highlightedPlayer.lastHits}/${highlightedPlayer.denies}\`\n` : '') +
+      (highlightedPlayer.imp !== null ? `• **STRATZ IMP:** \`${highlightedPlayer.imp > 0 ? '+' : ''}${highlightedPlayer.imp}\` (${highlightedPlayer.impComment})\n` : '');
+
+    highlightText =
+      `\n**ผู้เล่นที่ตรวจสอบ (${highlightedPlayer.name}):**\n` +
+      `• ฮีโร่: **${highlightedPlayer.hero}** (${highlightedPlayer.team})\n` +
+      `• ผลการแข่งขัน: **${outcome}**\n` +
+      `• KDA: \`${highlightedPlayer.kda}\` · Hero Damage: \`${(highlightedPlayer.heroDamage || 0).toLocaleString()}\`\n` +
+      stratzLine;
+  }
+
+  const topDamagers = [...data.players]
+    .sort((a, b) => b.heroDamage - a.heroDamage)
+    .slice(0, 4)
+    .map(
+      (p) =>
+        `• **${p.name}** (${p.hero}): \`${p.kda}\` · Dmg \`${(p.heroDamage || 0).toLocaleString()}\`` +
+        (p.imp !== null ? ` (IMP \`${p.imp > 0 ? '+' : ''}${p.imp}\`)` : '')
+    )
+    .join('\n');
+
+  return new EmbedBuilder()
+    .setColor(data.radiantWin ? THEME.win : THEME.loss)
+    .setTitle(`Match #${data.matchId} · ${winTeam}`)
+    .setDescription(
+      `${scoreText}\n` +
+      `${highlightText}\n` +
+      `**Top Performers (Damage):**\n${topDamagers}`
+    )
+    .setFooter({ text: data.hasStratz ? 'Powered by OpenDota + STRATZ Analytics' : 'Powered by OpenDota' });
+}
+
 async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
   const cleanId = String(matchId || '').match(/\d{8,12}/)?.[0];
   if (!cleanId) return;
@@ -344,56 +404,7 @@ async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
   await deferIfNeeded(replyTarget);
   try {
     const data = await getMatchById(cleanId);
-    const winTeam = data.radiantWin ? 'Radiant Victory' : 'Dire Victory';
-    const scoreText = `Radiant **${data.radiantScore}** — **${data.direScore}** Dire · ${data.duration}`;
-
-    const q = (targetQuery || '').toLowerCase().trim();
-    let highlightedPlayer = null;
-    if (q) {
-      highlightedPlayer = data.players.find(
-        (p) =>
-          p.hero.toLowerCase().includes(q) ||
-          p.name.toLowerCase().includes(q)
-      );
-    }
-
-    let highlightText = '';
-    if (highlightedPlayer) {
-      const outcome = highlightedPlayer.won ? '🏆 ชนะ' : '💀 แพ้';
-      const stratzLine =
-        (highlightedPlayer.lane ? `• **เลน:** ${highlightedPlayer.lane}\n` : '') +
-        (highlightedPlayer.networth ? `• **Networth:** \`${highlightedPlayer.networth.toLocaleString()}\` · **GPM:** \`${highlightedPlayer.gpm}\`\n` : '') +
-        (highlightedPlayer.lastHits ? `• **CS (Creep Score):** \`${highlightedPlayer.lastHits}/${highlightedPlayer.denies}\`\n` : '') +
-        (highlightedPlayer.imp !== null ? `• **STRATZ IMP:** \`${highlightedPlayer.imp > 0 ? '+' : ''}${highlightedPlayer.imp}\` (${highlightedPlayer.impComment})\n` : '');
-
-      highlightText =
-        `\n**ผู้เล่นที่ตรวจสอบ (${highlightedPlayer.name}):**\n` +
-        `• ฮีโร่: **${highlightedPlayer.hero}** (${highlightedPlayer.team})\n` +
-        `• ผลการแข่งขัน: **${outcome}**\n` +
-        `• KDA: \`${highlightedPlayer.kda}\` · Hero Damage: \`${(highlightedPlayer.heroDamage || 0).toLocaleString()}\`\n` +
-        stratzLine;
-    }
-
-    const topDamagers = [...data.players]
-      .sort((a, b) => b.heroDamage - a.heroDamage)
-      .slice(0, 4)
-      .map(
-        (p) =>
-          `• **${p.name}** (${p.hero}): \`${p.kda}\` · Dmg \`${(p.heroDamage || 0).toLocaleString()}\`` +
-          (p.imp !== null ? ` (IMP \`${p.imp > 0 ? '+' : ''}${p.imp}\`)` : '')
-      )
-      .join('\n');
-
-    const embed = new EmbedBuilder()
-      .setColor(data.radiantWin ? THEME.win : THEME.loss)
-      .setTitle(`Match #${data.matchId} · ${winTeam}`)
-      .setDescription(
-        `${scoreText}\n` +
-        `${highlightText}\n` +
-        `**Top Performers (Damage):**\n${topDamagers}`
-      )
-      .setFooter({ text: data.hasStratz ? 'Powered by OpenDota + STRATZ Analytics' : 'Powered by OpenDota' });
-
+    const embed = buildMatchCardEmbed(data, targetQuery);
     return sendReply(replyTarget, { embeds: [embed] });
   } catch (err) {
     return sendReply(replyTarget, { content: `⚠️ ตรวจสอบแมตช์ #${cleanId} ไม่สำเร็จ: ${err.message}` });
@@ -770,17 +781,46 @@ client.on('messageCreate', async (message) => {
         onLaunchArena: async () => handleActivityInvite(message.member?.voice?.channel, replyTarget),
       };
 
-      // ถ้าในข้อความมีรหัสแมตช์ 10 หลักชัดเจน ให้ดึงการ์ดแมตช์ขึ้นมาแสดงทันที
-      if (matchIdMatch && !raw.includes('!match')) {
-        handleInspectMatchCommand(matchIdMatch[1], raw, replyTarget).catch(() => {});
+      // ถ้าในข้อความมีรหัสแมตช์ 10 หลักชัดเจน ให้ดึงสถิติ OpenDota + STRATZ มารอไว้ล่วงหน้า
+      let extraContext = '';
+      let matchCardEmbed = null;
+
+      if (matchIdMatch && !raw.startsWith('!match') && !raw.startsWith('/match')) {
+        try {
+          const matchData = await getMatchById(matchIdMatch[1]);
+          if (matchData) {
+            matchCardEmbed = buildMatchCardEmbed(matchData, raw);
+
+            const playerSummaries = (matchData.players || []).map((p) => {
+              const impStr = p.imp !== null ? `${p.imp > 0 ? '+' : ''}${p.imp} (${p.impComment || ''})` : 'N/A';
+              return `- [${p.team}] ${p.hero} (ผู้เล่น: ${p.name || 'นิรนาม'}): เลน=${p.lane || 'N/A'}, ผล=${p.won ? 'ชนะ' : 'แพ้'}, KDA=${p.kda}, Damage=${(p.heroDamage || 0).toLocaleString()}, Networth=${(p.networth || 0).toLocaleString()}, GPM=${p.gpm || 0}, CS=${p.lastHits || 0}/${p.denies || 0}, STRATZ IMP=${impStr}`;
+            }).join('\n');
+
+            extraContext =
+              `[ข้อมูลสถิติแมตช์ #${matchData.matchId} จาก OpenDota & STRATZ Analytics]:\n` +
+              `ผลการแข่งขัน: ${matchData.radiantWin ? 'Radiant ชนะ' : 'Dire ชนะ'} (ความยาวเกม ${matchData.duration})\n` +
+              `สกอร์คิลรวม: Radiant ${matchData.radiantScore} - ${matchData.direScore} Dire\n\n` +
+              `สถิติผู้เล่นทุกคนในเกม:\n${playerSummaries}\n\n` +
+              `[ข้อกำหนดการตอบ]:\n` +
+              `- ดึงข้อมูลแมตช์ให้เรียบร้อยแล้ว ห้ามเรียก Tool inspect_match ซ้ำอีกเด็ดขาด\n` +
+              `- ตอบกลับด้วยบทวิเคราะห์เชิงลึกตามที่ผู้ใช้ถาม (เช่น ถ้าถามเลนกลาง ให้เทียบฟอร์มเลนกลางทั้ง 2 ฝั่งอย่างดุเดือด, ชี้ชัดว่าใครชนะเลน ใครแจก ใครฟาร์มไม่ทัน, ตัวเลข Networth, CS, IMP Score และการออกของ/ดาเมจ)\n` +
+              `- ตอบเป็นภาษาไทย มีลีลาเกมเมอร์ตัวตึง ปากแซ่บ จอมขยี้ คมคาย แต่เฮฮาและโดนใจ`;
+          }
+        } catch (mErr) {
+          console.warn('[PREFETCH MATCH ERROR]:', mErr.message);
+        }
       }
 
-      const aiReply = await runAutonomousAgent(cleanPrompt, message.author.id, actions, chatHistory);
+      const aiReply = await runAutonomousAgent(cleanPrompt, message.author.id, actions, chatHistory, extraContext);
       console.log(`[AI REPLY READY] length=${aiReply?.length}`);
       if (aiReply) {
-        return message.reply(aiReply.slice(0, 1990)).catch(async (replyErr) => {
+        const replyPayload = { content: aiReply.slice(0, 1990) };
+        if (matchCardEmbed) {
+          replyPayload.embeds = [matchCardEmbed];
+        }
+        return message.reply(replyPayload).catch(async (replyErr) => {
           console.error('[REPLY ERROR, FALLBACK TO SEND]', replyErr.message);
-          return message.channel.send(aiReply.slice(0, 1990)).catch((sendErr) => {
+          return message.channel.send(replyPayload).catch((sendErr) => {
             console.error('[SEND ERROR TOO]', sendErr.message);
           });
         });
