@@ -35,7 +35,7 @@ import {
   setWatchChannel,
   startMatchWatcher,
 } from './opendota.js';
-import { analyzeDraft, askDotaCoach } from './ai-coach.js';
+import { analyzeDraft, askDotaCoach, runAutonomousAgent } from './ai-coach.js';
 import { startMultiplayerServer } from './multiplayer-server.js';
 
 dotenv.config();
@@ -627,6 +627,54 @@ client.on('messageCreate', async (message) => {
   if (lower === '!ping' || lower === '/ping') return message.reply(`\`${client.ws.ping}ms\``);
   if (lower === '!info' || lower === '/info' || lower === '!help') {
     return message.reply({ embeds: [buildInfoEmbed()] });
+  }
+
+  // 3. Autonomous AI Agent (โต้ตอบภาษาไทยธรรมชาติอัตโนมัติด้วย Gemini 3.8 Flash)
+  const isMentioned = message.mentions.has(client.user);
+  const isReply =
+    message.reference?.messageId &&
+    (await message.channel.messages.fetch(message.reference.messageId).catch(() => null))?.author?.id ===
+      client.user.id;
+  const startsWithBot = /^(บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท)[,\s]+/i.test(raw) || /^บอท$/i.test(raw);
+
+  if (isMentioned || isReply || startsWithBot || message.channel.isDMBased()) {
+    let cleanPrompt = raw
+      .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
+      .replace(/^(บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท)[,\s]*/i, '')
+      .trim();
+
+    if (!cleanPrompt) cleanPrompt = 'สวัสดี';
+
+    try {
+      await message.channel.sendTyping();
+      const actions = {
+        onJoinVoice: async () => handleJoinVoice(message.member?.voice?.channel, replyTarget),
+        onLeaveVoice: async () => handleLeaveVoice(message.guildId, replyTarget),
+        onPlaySound: async (soundId) => {
+          const item = SOUNDBOARD_ITEMS.find((s) => s.id === soundId || s.id.includes(soundId));
+          if (item && message.member?.voice?.channel) {
+            await playVoiceTTS(message.member.voice.channel, item.text, item.lang);
+          }
+        },
+        onSayTTS: async (text) => {
+          if (message.member?.voice?.channel && text) {
+            await playVoiceTTS(message.member.voice.channel, text, 'th');
+          }
+        },
+        onCounterHero: async (hero) => handleCounterCommand(hero, replyTarget),
+        onDraftAnalysis: async (heroes) => handleDraftCommand(heroes, message.author.id, replyTarget),
+        onGetStats: async (target) => handleStatCommand(message.author.id, target || '', replyTarget),
+        onGetLastMatch: async (target) => handleLastMatchCommand(message.author.id, target || '', replyTarget),
+        onLaunchArena: async () => handleActivityInvite(message.member?.voice?.channel, replyTarget),
+      };
+
+      const aiReply = await runAutonomousAgent(cleanPrompt, message.author.id, actions);
+      if (aiReply) {
+        return message.reply(aiReply.slice(0, 1990));
+      }
+    } catch (agentErr) {
+      console.error('Autonomous Agent Handler Error:', agentErr.message);
+    }
   }
 });
 

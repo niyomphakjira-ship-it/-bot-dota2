@@ -2,10 +2,11 @@ import { GoogleGenAI } from '@google/genai';
 import { getStatisticalDraftCounters } from './opendota.js';
 
 const SYSTEM_INSTRUCTION =
-  'คุณคือโค้ช Dota 2 ระดับ Immortal ตอบเป็นภาษาไทยสไตล์ Minimal กระชับ ตรงประเด็น ไม่เกริ่นนำ ไม่สอนวิธีใช้บอท ' +
-  'แบ่งหัวข้อสั้นๆ ด้วย bullet points (เช่น จุดอ่อนดราฟต์, ฮีโร่แก้ทาง 3 ตัว, ไอเทมสำคัญ, แผนเดินเกม) ความยาวไม่เกิน 900 ตัวอักษร';
+  'คุณคือบอท AI Dota 2 อัจฉริยะประจำเซิร์ฟเวอร์ Discord "SleepKnight Gaming" ' +
+  'บุคลิก: เท่ ฉลาด สุภาพแต่เป็นกันเอง สไตล์เกมเมอร์ Dota 2 ตอบเป็นภาษาไทยกระชับ ไม่เยิ่นเย้อ ' +
+  'ถ้าผู้ใช้สั่งการหรือมีเจตนาที่ตรงกับเครื่องมือ (Tools) เช่น สั่งเข้าห้องเสียง, ออกจากห้อง, เล่นเสียง, ดูตัวแก้ทาง, วิเคราะห์ดราฟต์, ดูสถิติ, แมตช์ล่าสุด, หรือเปิดเกม ให้เรียกใช้เครื่องมือที่เกี่ยวข้องทันที ' +
+  'ถ้าผู้ใช้แค่พูดคุย ปรึกษา ถามคำถาม ทักทาย หรือชวนคุยเรื่องเกม ให้ตอบกลับอย่างเป็นธรรมชาติและมีประโยชน์';
 
-// เก็บ previous_interaction_id แยกรายผู้ใช้ เพื่อให้คุยต่อเนื่องได้ (Stateful Conversation)
 const userInteractions = new Map();
 
 function getClient() {
@@ -14,13 +15,108 @@ function getClient() {
   return new GoogleGenAI({ apiKey: apiKey.trim() });
 }
 
+export const AGENT_TOOLS = [
+  {
+    type: 'function',
+    name: 'join_voice',
+    description: 'สั่งให้บอทกระโดดเข้าร่วมห้องเสียง (Voice Channel) ที่ผู้ใช้อยู่',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    type: 'function',
+    name: 'leave_voice',
+    description: 'สั่งให้บอทออกจากห้องเสียง (Voice Channel)',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    type: 'function',
+    name: 'play_sound',
+    description: 'เล่นเสียงซาวด์เอฟเฟกต์ Dota 2 ในห้องเสียง',
+    parameters: {
+      type: 'object',
+      properties: {
+        sound_id: {
+          type: 'string',
+          enum: ['sound_welcome', 'sound_lakad', 'sound_rampage', 'sound_gank', 'sound_roshan'],
+          description:
+            'ไอดีเสียง: sound_welcome (ต้อนรับ), sound_lakad (Lakad Matatag), sound_rampage (Rampage), sound_gank (ระวังโดนแก๊ง), sound_roshan (ไปตี Roshan)',
+        },
+      },
+      required: ['sound_id'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'say_tts',
+    description: 'สั่งให้บอทพูดข้อความที่ต้องการเข้าไปในห้องเสียง',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'ข้อความภาษาไทยหรืออังกฤษที่ต้องการให้บอทพูดในห้องเสียง' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'counter_hero',
+    description: 'ค้นหาตัวแก้ทางและไอเทมสำคัญสำหรับรับมือฮีโร่ Dota 2',
+    parameters: {
+      type: 'object',
+      properties: {
+        hero: { type: 'string', description: 'ชื่อฮีโร่ เช่น pa, axe, pudge, sniper, invoker' },
+      },
+      required: ['hero'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'draft_analysis',
+    description: 'วิเคราะห์ดราฟต์ฮีโร่ศัตรูหลายตัวเพื่อหาฮีโร่แก้ทางทั้งทีม',
+    parameters: {
+      type: 'object',
+      properties: {
+        heroes: { type: 'string', description: 'รายชื่อฮีโร่ฝั่งตรงข้าม เช่น "pa axe invoker" หรือ "sniper lion"' },
+      },
+      required: ['heroes'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_player_stats',
+    description: 'เช็คสถิติโปรไฟล์ Rank และ Winrate ของผู้ใช้หรือเพื่อน',
+    parameters: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'ไอดี Steam หรือชื่อ/แท็กเพื่อน (ถ้าไม่ระบุหมายถึงตัวผู้ส่งเอง)' },
+      },
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_last_match',
+    description: 'เช็คสรุปผลการแข่งขันแมตช์ล่าสุด (KDA, ชนะ/แพ้, ดาเมจ) ของผู้ใช้หรือเพื่อน',
+    parameters: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'ไอดี Steam หรือชื่อ/แท็กเพื่อน (ถ้าไม่ระบุหมายถึงตัวผู้ส่งเอง)' },
+      },
+    },
+  },
+  {
+    type: 'function',
+    name: 'launch_arena',
+    description: 'สร้างปุ่มเปิดมินิเกม Dota 2 Arena (ตี Roshan, แข่งตอบ Trivia) ในห้องเสียง',
+    parameters: { type: 'object', properties: {} },
+  },
+];
+
 export async function analyzeDraft(enemyInput, discordUserId) {
   const tokens = enemyInput
     .split(/[\s,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // ดึงสถิติ Winrate จริงจาก OpenDota Matchups API ควบคู่ไปด้วยเสมอ
   const stats = await getStatisticalDraftCounters(tokens).catch(() => null);
   const client = getClient();
 
@@ -51,7 +147,6 @@ export async function analyzeDraft(enemyInput, discordUserId) {
     };
   }
 
-  // Fallback อัจฉริยะด้วยสถิติจริงจาก OpenDota เมื่อยังไม่ได้ใส่ GEMINI_API_KEY
   if (stats && stats.topCounters.length > 0) {
     const counterLines = stats.topCounters
       .map((c, idx) => `${idx + 1}. **${c.hero}** — Winrate เฉลี่ย \`${c.avgWinrate}%\``)
@@ -77,32 +172,72 @@ export async function analyzeDraft(enemyInput, discordUserId) {
 
 export async function askDotaCoach(question, discordUserId) {
   const client = getClient();
+  if (!client) {
+    return {
+      mode: 'offline',
+      text: 'ระบบ AI พร้อมใช้งานเมื่อใส่ GEMINI_API_KEY',
+    };
+  }
 
-  if (client) {
+  const prevId = discordUserId ? userInteractions.get(discordUserId) : undefined;
+  const params = {
+    model: 'gemini-3.8-flash',
+    input: question,
+    system_instruction: SYSTEM_INSTRUCTION,
+  };
+  if (prevId) params.previous_interaction_id = prevId;
+
+  const interaction = await client.interactions.create(params);
+  if (discordUserId && interaction?.id) {
+    userInteractions.set(discordUserId, interaction.id);
+  }
+
+  return {
+    mode: 'gemini-3.8-flash',
+    text: interaction.output_text || 'ไม่มีคำตอบจากระบบ',
+  };
+}
+
+// ระบบ Agent อัจฉริยะ: ตีความภาษาไทยธรรมชาติและเรียกใช้งานฟังก์ชันอัตโนมัติ
+export async function runAutonomousAgent(userInput, discordUserId, actions) {
+  const client = getClient();
+  if (!client) return null;
+
+  try {
     const prevId = discordUserId ? userInteractions.get(discordUserId) : undefined;
     const params = {
       model: 'gemini-3.8-flash',
-      input: question,
+      input: userInput,
+      tools: AGENT_TOOLS,
       system_instruction: SYSTEM_INSTRUCTION,
     };
     if (prevId) params.previous_interaction_id = prevId;
 
-    const interaction = await client.interactions.create(params);
-    if (discordUserId && interaction?.id) {
-      userInteractions.set(discordUserId, interaction.id);
+    const res = await client.interactions.create(params);
+    if (discordUserId && res?.id) {
+      userInteractions.set(discordUserId, res.id);
     }
 
-    return {
-      mode: 'gemini-3.8-flash',
-      text: interaction.output_text || 'ไม่มีคำตอบจากระบบ',
-    };
-  }
+    const toolCalls = res.steps?.filter((s) => s.type === 'function_call') || [];
 
-  // Fallback เมื่อยังไม่ได้ตั้งค่า GEMINI_API_KEY
-  return {
-    mode: 'offline',
-    text:
-      'ใส่ `GEMINI_API_KEY` ในไฟล์ `.env` เพื่อเปิดใช้งาน AI Coach (`gemini-3.8-flash`)\n' +
-      '*(คำสั่งวิเคราะห์ดราฟต์ `!draft <ชื่อฮีโร่>` ใช้งานผ่านสถิติสด OpenDota ได้ทันทีโดยไม่ต้องใช้คีย์)*',
-  };
+    if (toolCalls.length > 0) {
+      for (const call of toolCalls) {
+        const { name, arguments: args } = call;
+        if (name === 'join_voice') await actions.onJoinVoice();
+        else if (name === 'leave_voice') await actions.onLeaveVoice();
+        else if (name === 'play_sound') await actions.onPlaySound(args?.sound_id);
+        else if (name === 'say_tts') await actions.onSayTTS(args?.text);
+        else if (name === 'counter_hero') await actions.onCounterHero(args?.hero);
+        else if (name === 'draft_analysis') await actions.onDraftAnalysis(args?.heroes);
+        else if (name === 'get_player_stats') await actions.onGetStats(args?.target);
+        else if (name === 'get_last_match') await actions.onGetLastMatch(args?.target);
+        else if (name === 'launch_arena') await actions.onLaunchArena();
+      }
+    }
+
+    return res.output_text || null;
+  } catch (err) {
+    console.error('Autonomous Agent Error:', err.message);
+    return null;
+  }
 }
