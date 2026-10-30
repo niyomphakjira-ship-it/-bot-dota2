@@ -45,11 +45,6 @@ if (ffmpegPath && fs.existsSync(ffmpegPath)) {
 
 const { DISCORD_TOKEN, CLIENT_ID, PORT } = process.env;
 
-if (!DISCORD_TOKEN) {
-  console.error('❌ DISCORD_TOKEN not found in .env');
-  process.exit(1);
-}
-
 // Start Real-Time Multiplayer WebSocket + Activity Web Server
 startMultiplayerServer(Number(PORT) || 3000);
 
@@ -601,4 +596,10 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-client.login(DISCORD_TOKEN);
+if (DISCORD_TOKEN && DISCORD_TOKEN.trim()) {
+  client.login(DISCORD_TOKEN.trim()).catch((err) => {
+    console.error('❌ Discord login failed:', err.message);
+  });
+} else {
+  console.warn('⚠️ DISCORD_TOKEN is not set yet. Set DISCORD_TOKEN in Environment Variables.');
+}

@@ -1,8 +1,8 @@
 # Stage 1: Build Multiplayer Activity Client
 FROM node:22-slim AS client-builder
 WORKDIR /app/activity-client
-COPY activity-client/package*.json ./
-RUN npm install
+COPY activity-client/package.json ./
+RUN npm install --no-audit --no-fund
 COPY activity-client/ ./
 RUN npm run build
 
@@ -14,8 +14,8 @@ WORKDIR /app
 COPY --from=client-builder /app/activity-client/dist ./activity-client/dist
 
 WORKDIR /app/bot
-COPY bot/package*.json ./
-RUN npm install --omit=dev
+COPY bot/package.json ./
+RUN npm install --omit=dev --no-audit --no-fund
 COPY bot/ ./
 
 ENV NODE_ENV=production
