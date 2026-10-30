@@ -11,7 +11,7 @@ export function hasStratzToken() {
 
 /**
  * ดึงข้อมูลการแข่งขันเชิงลึกจาก STRATZ GraphQL API
- * รวมค่า IMP (คะแนนวัดตัวแบก/ตัวถ่วง), Lane Outcome (แพ้/ชนะเลน), และ Award
+ * รวมค่า IMP, Lane, Role, GPM, Networth, Last Hits/Denies
  */
 export async function getStratzMatch(matchId) {
   const token = getStratzToken();
@@ -23,21 +23,22 @@ export async function getStratzMatch(matchId) {
         id
         didRadiantWin
         durationSeconds
-        radiantScore
-        direScore
         players {
           steamAccountId
           heroId
           isRadiant
+          lane
+          role
           imp
+          award
+          numLastHits
+          numDenies
+          goldPerMinute
+          networth
+          heroDamage
           kills
           deaths
           assists
-          networth
-          heroDamage
-          lane
-          laneOutcome
-          award
         }
       }
     }
@@ -49,7 +50,7 @@ export async function getStratzMatch(matchId) {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
-        'User-Agent': 'STRATZ_DOTA2_DISCORD_BOT',
+        'User-Agent': 'STRATZ_API',
       },
       body: JSON.stringify({
         query,
@@ -66,35 +67,41 @@ export async function getStratzMatch(matchId) {
     const match = json.data?.match;
     if (!match) return null;
 
-    // แปลงผล Lane Outcome ให้เข้าใจง่าย
-    // 1 = Win, 2 = Loss, 3 = Even
-    const parseLaneOutcome = (val) => {
-      if (val === 1 || val === 'WON') return 'ชนะเลนขาดลอย 🔥';
-      if (val === 2 || val === 'LOST') return 'แพ้เลนยับเยิน 💀';
-      if (val === 3 || val === 'DRAW') return 'เสมอเลน สูสี';
-      return 'ไม่ระบุ';
+    const parseLane = (lane) => {
+      if (lane === 'MID_LANE') return 'เลนกลาง (Mid Lane) 🎯';
+      if (lane === 'SAFE_LANE') return 'เซฟเลน (Safe Lane)';
+      if (lane === 'OFF_LANE') return 'ออฟเลน (Off Lane)';
+      if (lane === 'JUNGLE') return 'ฟาร์มป่า (Jungle)';
+      return lane || 'ไม่ระบุ';
     };
 
     const players = (match.players || []).map((p) => {
-      let impComment = 'ปกติ';
-      if (p.imp >= 25) impComment = 'ตัวแบกเกมนรกแตก (Godlike)';
-      else if (p.imp >= 10) impComment = 'เล่นดี แบกทีม';
-      else if (p.imp <= -25) impComment = 'ตัวถ่วงระดับหายนะ (Mega Thrower)';
-      else if (p.imp <= -10) impComment = 'แจกยับ ฟอร์มตก';
+      let impComment = 'ฟอร์มทั่วไป';
+      if (typeof p.imp === 'number') {
+        if (p.imp >= 25) impComment = 'ตัวแบกเกมนรกแตก (Godlike)';
+        else if (p.imp >= 10) impComment = 'เล่นดี แบกทีม';
+        else if (p.imp <= -25) impComment = 'ตัวถ่วงระดับหายนะ (Mega Thrower)';
+        else if (p.imp <= -10) impComment = 'แจกยับ ฟอร์มตก';
+      }
 
       return {
         steamId: p.steamAccountId,
         heroId: p.heroId,
         isRadiant: p.isRadiant,
-        imp: p.imp ?? 0,
+        imp: p.imp,
         impComment,
-        laneOutcome: parseLaneOutcome(p.laneOutcome),
-        award: p.award || null,
-        kills: p.kills,
-        deaths: p.deaths,
-        assists: p.assists,
-        networth: p.networth,
-        heroDamage: p.heroDamage,
+        lane: parseLane(p.lane),
+        rawLane: p.lane,
+        role: p.role,
+        award: p.award,
+        lastHits: p.numLastHits ?? 0,
+        denies: p.numDenies ?? 0,
+        gpm: p.goldPerMinute ?? 0,
+        networth: p.networth ?? 0,
+        heroDamage: p.heroDamage ?? 0,
+        kills: p.kills ?? 0,
+        deaths: p.deaths ?? 0,
+        assists: p.assists ?? 0,
       };
     });
 
@@ -102,8 +109,6 @@ export async function getStratzMatch(matchId) {
       matchId: match.id,
       didRadiantWin: match.didRadiantWin,
       duration: `${Math.floor(match.durationSeconds / 60)}:${String(match.durationSeconds % 60).padStart(2, '0')}`,
-      radiantScore: match.radiantScore,
-      direScore: match.direScore,
       players,
     };
   } catch (err) {

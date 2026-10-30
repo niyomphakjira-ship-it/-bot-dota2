@@ -258,9 +258,13 @@ export async function getMatchById(matchId) {
       won,
       isRadiant,
       team: isRadiant ? 'Radiant' : 'Dire',
+      lane: s?.lane ?? null,
+      gpm: s?.gpm ?? p.gold_per_min ?? null,
+      networth: s?.networth ?? p.net_worth ?? null,
+      lastHits: s?.lastHits ?? p.last_hits ?? null,
+      denies: s?.denies ?? p.denies ?? null,
       imp: s?.imp ?? null,
       impComment: s?.impComment ?? null,
-      laneOutcome: s?.laneOutcome ?? null,
       award: s?.award ?? null,
     };
   });

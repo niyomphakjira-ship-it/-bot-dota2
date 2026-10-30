@@ -361,10 +361,10 @@ async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
     if (highlightedPlayer) {
       const outcome = highlightedPlayer.won ? '🏆 ชนะ' : '💀 แพ้';
       const stratzLine =
-        highlightedPlayer.imp !== null
-          ? `• **STRATZ IMP:** \`${highlightedPlayer.imp > 0 ? '+' : ''}${highlightedPlayer.imp}\` (${highlightedPlayer.impComment})\n` +
-            `• **การยืนเลน:** ${highlightedPlayer.laneOutcome || 'ไม่ระบุ'}\n`
-          : '';
+        (highlightedPlayer.lane ? `• **เลน:** ${highlightedPlayer.lane}\n` : '') +
+        (highlightedPlayer.networth ? `• **Networth:** \`${highlightedPlayer.networth.toLocaleString()}\` · **GPM:** \`${highlightedPlayer.gpm}\`\n` : '') +
+        (highlightedPlayer.lastHits ? `• **CS (Creep Score):** \`${highlightedPlayer.lastHits}/${highlightedPlayer.denies}\`\n` : '') +
+        (highlightedPlayer.imp !== null ? `• **STRATZ IMP:** \`${highlightedPlayer.imp > 0 ? '+' : ''}${highlightedPlayer.imp}\` (${highlightedPlayer.impComment})\n` : '');
 
       highlightText =
         `\n**ผู้เล่นที่ตรวจสอบ (${highlightedPlayer.name}):**\n` +
