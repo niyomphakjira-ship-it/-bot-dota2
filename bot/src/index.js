@@ -64,7 +64,12 @@ startMultiplayerServer(Number(PORT) || 3000, () => ({
   botOnline: client.isReady(),
   botTag: client.user?.tag || null,
   hasToken: Boolean(DISCORD_TOKEN),
-  hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+  hasGeminiKey: Boolean(
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.GEMINI_KEY
+  ),
+  detectedEnvKeys: Object.keys(process.env).filter((k) => /gemini|google/i.test(k)),
   botError: lastBotError,
 }));
 

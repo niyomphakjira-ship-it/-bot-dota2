@@ -10,9 +10,15 @@ const SYSTEM_INSTRUCTION =
 const userInteractions = new Map();
 
 function getClient() {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey || apiKey.trim() === '') return null;
-  return new GoogleGenAI({ apiKey: apiKey.trim() });
+  const rawKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.GEMINI_KEY ||
+    '';
+  const match = String(rawKey).match(/(AQ\.[A-Za-z0-9_-]+|AIzaSy[A-Za-z0-9_-]{33}|[A-Za-z0-9_-]{35,})/);
+  const apiKey = match ? match[0] : rawKey.trim();
+  if (!apiKey) return null;
+  return new GoogleGenAI({ apiKey });
 }
 
 export const AGENT_TOOLS = [
