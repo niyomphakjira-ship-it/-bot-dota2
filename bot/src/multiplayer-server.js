@@ -226,5 +226,11 @@ export function startMultiplayerServer(port = process.env.PORT || 3000) {
     console.log(`🌐 Multiplayer Activity Server listening on http://localhost:${port}`);
   });
 
+  // Auto Keep-Alive สำหรับคลาวด์ (ป้องกันโหมดประหยัดพลังงาน 15 นาทีของ Render Free Tier)
+  const externalUrl = process.env.RENDER_EXTERNAL_URL || 'https://dota2-discord-bot-arena.onrender.com';
+  setInterval(() => {
+    fetch(`${externalUrl}/health`).catch(() => {});
+  }, 10 * 60 * 1000);
+
   return { app, server, io };
 }
