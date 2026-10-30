@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getStratzMatch } from './stratz.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -225,12 +226,16 @@ export async function getLastMatch(accountId) {
   };
 }
 
-// Fetch Specific Match Details by Match ID
+// Fetch Specific Match Details by Match ID (OpenDota + STRATZ Deep Stats)
 export async function getMatchById(matchId) {
   await ensureHeroesLoaded();
-  const res = await fetch(`${OPENDOTA_BASE}/matches/${matchId}`);
-  if (!res.ok) throw new Error(`ไม่พบข้อมูลแมตช์ไอดี ${matchId} ในระบบ OpenDota`);
-  const data = await res.json();
+  const [openDotaRes, stratzData] = await Promise.all([
+    fetch(`${OPENDOTA_BASE}/matches/${matchId}`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    getStratzMatch(matchId).catch(() => null),
+  ]);
+
+  if (!openDotaRes) throw new Error(`ไม่พบข้อมูลแมตช์ไอดี ${matchId} ในระบบ`);
+  const data = openDotaRes;
 
   const mins = Math.floor(data.duration / 60);
   const secs = String(data.duration % 60).padStart(2, '0');
@@ -238,8 +243,12 @@ export async function getMatchById(matchId) {
   const players = (data.players || []).map((p) => {
     const isRadiant = p.player_slot < 128;
     const won = (isRadiant && data.radiant_win) || (!isRadiant && !data.radiant_win);
+
+    const s = stratzData?.players?.find((sp) => sp.heroId === p.hero_id);
+
     return {
       name: p.personaname || `Player (Slot ${p.player_slot})`,
+      heroId: p.hero_id,
       hero: getHeroName(p.hero_id),
       kills: p.kills ?? 0,
       deaths: p.deaths ?? 0,
@@ -249,6 +258,10 @@ export async function getMatchById(matchId) {
       won,
       isRadiant,
       team: isRadiant ? 'Radiant' : 'Dire',
+      imp: s?.imp ?? null,
+      impComment: s?.impComment ?? null,
+      laneOutcome: s?.laneOutcome ?? null,
+      award: s?.award ?? null,
     };
   });
 
@@ -259,6 +272,7 @@ export async function getMatchById(matchId) {
     radiantScore: data.radiant_score ?? 0,
     direScore: data.dire_score ?? 0,
     players,
+    hasStratz: Boolean(stratzData),
   };
 }
 

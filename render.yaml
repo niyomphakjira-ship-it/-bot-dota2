@@ -14,3 +14,5 @@ services:
         value: "1565361212299022376"
       - key: GEMINI_API_KEY
         sync: false
+      - key: STRATZ_TOKEN
+        sync: false

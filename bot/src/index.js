@@ -71,6 +71,7 @@ startMultiplayerServer(Number(PORT) || 3000, () => ({
     process.env.GEMINI_KEY
   ),
   detectedEnvKeys: Object.keys(process.env).filter((k) => /gemini|google/i.test(k)),
+  hasStratzToken: Boolean(process.env.STRATZ_TOKEN),
   botError: lastBotError,
 }));
 
@@ -359,11 +360,18 @@ async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
     let highlightText = '';
     if (highlightedPlayer) {
       const outcome = highlightedPlayer.won ? '🏆 ชนะ' : '💀 แพ้';
+      const stratzLine =
+        highlightedPlayer.imp !== null
+          ? `• **STRATZ IMP:** \`${highlightedPlayer.imp > 0 ? '+' : ''}${highlightedPlayer.imp}\` (${highlightedPlayer.impComment})\n` +
+            `• **การยืนเลน:** ${highlightedPlayer.laneOutcome || 'ไม่ระบุ'}\n`
+          : '';
+
       highlightText =
         `\n**ผู้เล่นที่ตรวจสอบ (${highlightedPlayer.name}):**\n` +
         `• ฮีโร่: **${highlightedPlayer.hero}** (${highlightedPlayer.team})\n` +
         `• ผลการแข่งขัน: **${outcome}**\n` +
-        `• KDA: \`${highlightedPlayer.kda}\` · Hero Damage: \`${(highlightedPlayer.heroDamage || 0).toLocaleString()}\`\n`;
+        `• KDA: \`${highlightedPlayer.kda}\` · Hero Damage: \`${(highlightedPlayer.heroDamage || 0).toLocaleString()}\`\n` +
+        stratzLine;
     }
 
     const topDamagers = [...data.players]
@@ -371,7 +379,8 @@ async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
       .slice(0, 4)
       .map(
         (p) =>
-          `• **${p.name}** (${p.hero}): \`${p.kda}\` · Dmg \`${(p.heroDamage || 0).toLocaleString()}\``
+          `• **${p.name}** (${p.hero}): \`${p.kda}\` · Dmg \`${(p.heroDamage || 0).toLocaleString()}\`` +
+          (p.imp !== null ? ` (IMP \`${p.imp > 0 ? '+' : ''}${p.imp}\`)` : '')
       )
       .join('\n');
 
@@ -382,7 +391,8 @@ async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
         `${scoreText}\n` +
         `${highlightText}\n` +
         `**Top Performers (Damage):**\n${topDamagers}`
-      );
+      )
+      .setFooter({ text: data.hasStratz ? 'Powered by OpenDota + STRATZ Analytics' : 'Powered by OpenDota' });
 
     return sendReply(replyTarget, { embeds: [embed] });
   } catch (err) {
