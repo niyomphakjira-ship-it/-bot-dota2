@@ -104,6 +104,18 @@ export const AGENT_TOOLS = [
     description: 'สร้างปุ่มเปิดมินิเกม Dota 2 Arena (ตี Roshan, แข่งตอบ Trivia) ในห้องเสียง',
     parameters: { type: 'object', properties: {} },
   },
+  {
+    name: 'inspect_match',
+    description: 'ดูรายละเอียดและสถิติของผู้เล่นทุกคนในแมตช์ Dota 2 จาก Match ID (รหัสแมตช์ตัวเลข 10 หลัก เช่น 9067295186) พร้อมระบุฮีโร่หรือชื่อผู้เล่นที่ต้องการตรวจ',
+    parameters: {
+      type: 'object',
+      properties: {
+        match_id: { type: 'string', description: 'รหัสแมตช์ Dota 2 (ตัวเลข 10 หลัก เช่น 9067295186)' },
+        target_hero: { type: 'string', description: 'ชื่อฮีโร่หรือชื่อผู้เล่นที่ต้องการตรวจดู เช่น zeus, sleepknight' },
+      },
+      required: ['match_id'],
+    },
+  },
 ];
 
 async function generateWithFallback({ prompt, systemInstruction, tools }) {
@@ -220,16 +232,22 @@ export async function askDotaCoach(question, discordUserId) {
   }
 }
 
-// ระบบ Autonomous AI Agent: รองรับ Function Calling + บทสนทนาตอบกลับทันใจ (< 2 วินาที)
-export async function runAutonomousAgent(userInput, discordUserId, actions) {
+// ระบบ Autonomous AI Agent: รองรับ Function Calling + บริบทแชทย้อนหลัง + บทสนทนาตอบกลับทันใจ (< 2 วินาที)
+export async function runAutonomousAgent(userInput, discordUserId, actions, chatHistory = []) {
   const client = getClient();
   if (!client) {
     return '⚠️ ระบบ AI ยังไม่พร้อมใช้งาน: กรุณาใส่ `GEMINI_API_KEY` ใน Render Dashboard (Environment Variables) ครับ';
   }
 
   try {
+    let promptText = '';
+    if (chatHistory && chatHistory.length > 0) {
+      promptText += `[บริบทการสนทนาล่าสุดในห้อง Discord]:\n${chatHistory.join('\n')}\n\n`;
+    }
+    promptText += `[ข้อความล่าสุดของผู้ใช้]:\n${userInput || 'สวัสดี'}`;
+
     const { res } = await generateWithFallback({
-      prompt: userInput || 'สวัสดี',
+      prompt: promptText,
       systemInstruction: SYSTEM_INSTRUCTION,
       tools: AGENT_TOOLS,
     });
@@ -262,6 +280,9 @@ export async function runAutonomousAgent(userInput, discordUserId, actions) {
           await actions.onGetLastMatch(args?.target);
         } else if (name === 'launch_arena') {
           await actions.onLaunchArena();
+        } else if (name === 'inspect_match') {
+          await actions.onInspectMatch(args?.match_id, args?.target_hero);
+          toolActionSummary = `🔍 ดึงข้อมูลแมตช์ ${args?.match_id} ให้เรียบร้อยครับ`;
         }
       }
     }

@@ -32,6 +32,7 @@ import {
   parseAccountId,
   getPlayerStats,
   getLastMatch,
+  getMatchById,
   setWatchChannel,
   startMatchWatcher,
 } from './opendota.js';
@@ -335,6 +336,60 @@ async function handleLastMatchCommand(discordUserId, rawArg, replyTarget) {
   }
 }
 
+async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
+  const cleanId = String(matchId || '').match(/\d{8,12}/)?.[0];
+  if (!cleanId) return;
+
+  await deferIfNeeded(replyTarget);
+  try {
+    const data = await getMatchById(cleanId);
+    const winTeam = data.radiantWin ? 'Radiant Victory' : 'Dire Victory';
+    const scoreText = `Radiant **${data.radiantScore}** — **${data.direScore}** Dire · ${data.duration}`;
+
+    const q = (targetQuery || '').toLowerCase().trim();
+    let highlightedPlayer = null;
+    if (q) {
+      highlightedPlayer = data.players.find(
+        (p) =>
+          p.hero.toLowerCase().includes(q) ||
+          p.name.toLowerCase().includes(q)
+      );
+    }
+
+    let highlightText = '';
+    if (highlightedPlayer) {
+      const outcome = highlightedPlayer.won ? '🏆 ชนะ' : '💀 แพ้';
+      highlightText =
+        `\n**ผู้เล่นที่ตรวจสอบ (${highlightedPlayer.name}):**\n` +
+        `• ฮีโร่: **${highlightedPlayer.hero}** (${highlightedPlayer.team})\n` +
+        `• ผลการแข่งขัน: **${outcome}**\n` +
+        `• KDA: \`${highlightedPlayer.kda}\` · Hero Damage: \`${(highlightedPlayer.heroDamage || 0).toLocaleString()}\`\n`;
+    }
+
+    const topDamagers = [...data.players]
+      .sort((a, b) => b.heroDamage - a.heroDamage)
+      .slice(0, 4)
+      .map(
+        (p) =>
+          `• **${p.name}** (${p.hero}): \`${p.kda}\` · Dmg \`${(p.heroDamage || 0).toLocaleString()}\``
+      )
+      .join('\n');
+
+    const embed = new EmbedBuilder()
+      .setColor(data.radiantWin ? THEME.win : THEME.loss)
+      .setTitle(`Match #${data.matchId} · ${winTeam}`)
+      .setDescription(
+        `${scoreText}\n` +
+        `${highlightText}\n` +
+        `**Top Performers (Damage):**\n${topDamagers}`
+      );
+
+    return sendReply(replyTarget, { embeds: [embed] });
+  } catch (err) {
+    return sendReply(replyTarget, { content: `⚠️ ตรวจสอบแมตช์ #${cleanId} ไม่สำเร็จ: ${err.message}` });
+  }
+}
+
 // 4. AI Draft & Coach (Gemini 3.8 Flash + OpenDota Statistical Matchups)
 async function handleDraftCommand(enemiesText, discordUserId, replyTarget) {
   if (!enemiesText || !enemiesText.trim()) {
@@ -464,6 +519,10 @@ client.once('ready', async () => {
       .setDescription('Latest Dota 2 match summary')
       .addStringOption((o) => o.setName('id').setDescription('Optional ID').setRequired(false)),
     new SlashCommandBuilder()
+      .setName('match')
+      .setDescription('Inspect Dota 2 match by Match ID')
+      .addStringOption((o) => o.setName('id').setDescription('Match ID (10 digits)').setRequired(true)),
+    new SlashCommandBuilder()
       .setName('watch')
       .setDescription('Set current channel for auto match alerts'),
     new SlashCommandBuilder().setName('activity').setDescription('Launch Multiplayer Dota 2 Arena'),
@@ -560,6 +619,7 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (commandName === 'stat') return handleStatCommand(interaction.user.id, interaction.options.getString('id') || '', replyTarget);
   if (commandName === 'lastmatch') return handleLastMatchCommand(interaction.user.id, interaction.options.getString('id') || '', replyTarget);
+  if (commandName === 'match') return handleInspectMatchCommand(interaction.options.getString('id') || '', '', replyTarget);
   if (commandName === 'watch') {
     setWatchChannel(interaction.guildId, interaction.channelId);
     return interaction.reply({
@@ -624,6 +684,10 @@ client.on('messageCreate', async (message) => {
     return handleLastMatchCommand(message.author.id, raw.replace(/^(!|\/)lastmatch\s*/i, ''), replyTarget);
   }
 
+  if (lower.startsWith('!match ') || lower.startsWith('/match ')) {
+    return handleInspectMatchCommand(raw.replace(/^(!|\/)match\s*/i, ''), raw, replyTarget);
+  }
+
   if (lower === '!watch' || lower === '/watch') {
     setWatchChannel(message.guildId, message.channelId);
     return message.reply({
@@ -640,7 +704,7 @@ client.on('messageCreate', async (message) => {
     return message.reply({ embeds: [buildInfoEmbed()] });
   }
 
-  // 3. Autonomous AI Agent (โต้ตอบภาษาไทยธรรมชาติอัตโนมัติด้วย Gemini 3.8 Flash)
+  // 3. Autonomous AI Agent (โต้ตอบภาษาไทยธรรมชาติอัตโนมัติด้วย Gemini 3.5 Flash Lite + บริบทแชทย้อนหลัง)
   const isMentioned = message.mentions.has(client.user);
   const isReply =
     message.reference?.messageId &&
@@ -651,6 +715,8 @@ client.on('messageCreate', async (message) => {
     lower.startsWith('บอท') ||
     lower.startsWith('bot');
 
+  const matchIdMatch = raw.match(/\b(\d{10})\b/);
+
   if (isMentioned || isReply || startsWithBot || message.channel.isDMBased()) {
     let cleanPrompt = raw
       .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
@@ -659,6 +725,16 @@ client.on('messageCreate', async (message) => {
 
     if (!cleanPrompt) cleanPrompt = 'สวัสดี';
     console.log(`[AI TRIGGER] user="${message.author.tag}" prompt=${JSON.stringify(cleanPrompt)}`);
+
+    // ดึงประวัติแชทย้อนหลัง 6-8 ข้อความในห้อง เพื่อให้ AI จำบทสนทนาและเข้าใจบริบท
+    let chatHistory = [];
+    try {
+      const prev = await message.channel.messages.fetch({ limit: 8 });
+      chatHistory = [...prev.values()]
+        .filter((m) => m.id !== message.id && m.content)
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        .map((m) => `${m.author.displayName || m.author.username}: ${m.content.slice(0, 300)}`);
+    } catch (_histErr) {}
 
     try {
       await message.channel.sendTyping().catch(() => {});
@@ -680,10 +756,16 @@ client.on('messageCreate', async (message) => {
         onDraftAnalysis: async (heroes) => handleDraftCommand(heroes, message.author.id, replyTarget),
         onGetStats: async (target) => handleStatCommand(message.author.id, target || '', replyTarget),
         onGetLastMatch: async (target) => handleLastMatchCommand(message.author.id, target || '', replyTarget),
+        onInspectMatch: async (mId, hero) => handleInspectMatchCommand(mId, hero, replyTarget),
         onLaunchArena: async () => handleActivityInvite(message.member?.voice?.channel, replyTarget),
       };
 
-      const aiReply = await runAutonomousAgent(cleanPrompt, message.author.id, actions);
+      // ถ้าในข้อความมีรหัสแมตช์ 10 หลักชัดเจน ให้ดึงการ์ดแมตช์ขึ้นมาแสดงทันที
+      if (matchIdMatch && !raw.includes('!match')) {
+        handleInspectMatchCommand(matchIdMatch[1], raw, replyTarget).catch(() => {});
+      }
+
+      const aiReply = await runAutonomousAgent(cleanPrompt, message.author.id, actions, chatHistory);
       console.log(`[AI REPLY READY] length=${aiReply?.length}`);
       if (aiReply) {
         return message.reply(aiReply.slice(0, 1990)).catch(async (replyErr) => {

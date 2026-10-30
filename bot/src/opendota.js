@@ -225,6 +225,43 @@ export async function getLastMatch(accountId) {
   };
 }
 
+// Fetch Specific Match Details by Match ID
+export async function getMatchById(matchId) {
+  await ensureHeroesLoaded();
+  const res = await fetch(`${OPENDOTA_BASE}/matches/${matchId}`);
+  if (!res.ok) throw new Error(`ไม่พบข้อมูลแมตช์ไอดี ${matchId} ในระบบ OpenDota`);
+  const data = await res.json();
+
+  const mins = Math.floor(data.duration / 60);
+  const secs = String(data.duration % 60).padStart(2, '0');
+
+  const players = (data.players || []).map((p) => {
+    const isRadiant = p.player_slot < 128;
+    const won = (isRadiant && data.radiant_win) || (!isRadiant && !data.radiant_win);
+    return {
+      name: p.personaname || `Player (Slot ${p.player_slot})`,
+      hero: getHeroName(p.hero_id),
+      kills: p.kills ?? 0,
+      deaths: p.deaths ?? 0,
+      assists: p.assists ?? 0,
+      kda: `${p.kills ?? 0}/${p.deaths ?? 0}/${p.assists ?? 0}`,
+      heroDamage: p.hero_damage || 0,
+      won,
+      isRadiant,
+      team: isRadiant ? 'Radiant' : 'Dire',
+    };
+  });
+
+  return {
+    matchId: data.match_id,
+    duration: `${mins}:${secs}`,
+    radiantWin: data.radiant_win,
+    radiantScore: data.radiant_score ?? 0,
+    direScore: data.dire_score ?? 0,
+    players,
+  };
+}
+
 // Statistical Draft Counter Calculator using OpenDota Matchups API
 export async function getStatisticalDraftCounters(enemyTokens) {
   await ensureHeroesLoaded();
