@@ -22,6 +22,7 @@ import {
 } from '@discordjs/voice';
 import * as googleTTS from 'google-tts-api';
 import ffmpegPath from 'ffmpeg-static';
+import fs from 'fs';
 import { Readable } from 'stream';
 import dotenv from 'dotenv';
 import { DOTA_HEROES, SOUNDBOARD_ITEMS, findHeroCounter } from './dota-data.js';
@@ -38,7 +39,9 @@ import { analyzeDraft, askDotaCoach } from './ai-coach.js';
 import { startMultiplayerServer } from './multiplayer-server.js';
 
 dotenv.config();
-process.env.FFMPEG_PATH = ffmpegPath;
+if (ffmpegPath && fs.existsSync(ffmpegPath)) {
+  process.env.FFMPEG_PATH = ffmpegPath;
+}
 
 const { DISCORD_TOKEN, CLIENT_ID, PORT } = process.env;
 
