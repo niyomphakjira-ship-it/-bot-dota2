@@ -1,0 +1,7 @@
+node_modules/
+**/node_modules/
+.env
+**/.env
+activity-client/dist/
+bot/data/store.json
+*.log

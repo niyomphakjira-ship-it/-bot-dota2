@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: dota2-discord-bot-arena
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "3000"
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: CLIENT_ID
+        value: "1565361212299022376"
+      - key: GEMINI_API_KEY
+        sync: false

@@ -1,0 +1,10 @@
+{
+  "name": "discord-bot-and-activity-starter",
+  "version": "1.0.0",
+  "description": "Discord Bot + Discord Activity (Embedded App) Starter Project",
+  "scripts": {
+    "start:bot": "cd bot && node src/index.js",
+    "register:bot": "cd bot && node src/register-commands.js",
+    "dev:activity": "cd activity-client && npx vite --port 3000 --host"
+  }
+}

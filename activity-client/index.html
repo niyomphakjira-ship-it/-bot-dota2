@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dota 2 Arena</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Minimal Header -->
+      <header class="header">
+        <div class="brand">
+          <span class="brand-dot"></span>
+          <h1>DOTA 2 ARENA</h1>
+          <span id="room-tag" class="room-tag">LOBBY</span>
+        </div>
+        <div id="connection-status" class="status-pill">
+          <span class="dot"></span>
+          <span id="status-text">Syncing</span>
+        </div>
+      </header>
+
+      <!-- Minimal Mode Switcher -->
+      <div class="tabs">
+        <button id="tab-roshan" class="tab-btn active">Roshan Raid</button>
+        <button id="tab-quiz" class="tab-btn">Trivia Showdown</button>
+      </div>
+
+      <!-- MODE 1: MULTIPLAYER ROSHAN RAID -->
+      <section id="view-roshan" class="card">
+        <div class="row-between">
+          <div>
+            <span id="roshan-level" class="tag-accent">LV. 1</span>
+            <h2 class="boss-title">Roshan</h2>
+          </div>
+          <div class="aegis-pill">
+            Aegis <strong id="aegis-count">0</strong>
+          </div>
+        </div>
+
+        <div class="hp-track">
+          <div id="hp-bar-fill" class="hp-fill" style="width: 100%"></div>
+          <span id="hp-text" class="hp-label">1,500 / 1,500</span>
+        </div>
+
+        <div id="hit-feed" class="hit-feed">Ready</div>
+
+        <div class="stats-row">
+          <div class="stat-cell">
+            <span>GOLD</span>
+            <strong id="gold-display" class="gold">0</strong>
+          </div>
+          <div class="stat-cell">
+            <span>ATK</span>
+            <strong id="dmg-display">15</strong>
+          </div>
+          <div class="stat-cell">
+            <span>COMBO</span>
+            <strong id="combo-display">x1</strong>
+          </div>
+        </div>
+
+        <button id="attack-btn" class="primary-btn">ATTACK</button>
+
+        <div class="shop-grid">
+          <button class="shop-item" data-cost="25" data-dmg="5">
+            <span>Quelling Blade <em>+5</em></span>
+            <span class="cost">25g</span>
+          </button>
+          <button class="shop-item" data-cost="100" data-dmg="25">
+            <span>Battle Fury <em>+25</em></span>
+            <span class="cost">100g</span>
+          </button>
+          <button class="shop-item" data-cost="300" data-dmg="80">
+            <span>Desolator <em>+80</em></span>
+            <span class="cost">300g</span>
+          </button>
+          <button class="shop-item" data-cost="1000" data-dmg="300">
+            <span>Divine Rapier <em>+300</em></span>
+            <span class="cost">1000g</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- MODE 2: MULTIPLAYER TRIVIA SHOWDOWN -->
+      <section id="view-quiz" class="card hidden">
+        <div class="row-between quiz-meta">
+          <span id="question-number" class="tag-subtle">Q1</span>
+          <span id="first-blood-tag" class="fb-tag">First Blood: —</span>
+        </div>
+
+        <h3 id="question-text" class="question-title">Loading...</h3>
+
+        <div id="options-list" class="options-list"></div>
+
+        <div id="quiz-feedback" class="quiz-feedback hidden"></div>
+
+        <button id="next-question-btn" class="ghost-btn hidden">Next Round →</button>
+      </section>
+
+      <!-- LIVE MULTIPLAYER LEADERBOARD -->
+      <section class="card leaderboard-card">
+        <div class="row-between lb-header">
+          <span class="lb-title">LIVE LEADERBOARD</span>
+          <span id="online-count" class="lb-count">1 Online</span>
+        </div>
+        <div id="leaderboard-list" class="lb-list"></div>
+      </section>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
