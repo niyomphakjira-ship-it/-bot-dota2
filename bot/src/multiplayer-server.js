@@ -101,7 +101,7 @@ function serializeRoom(room) {
   };
 }
 
-export function startMultiplayerServer(port = process.env.PORT || 3000) {
+export function startMultiplayerServer(port = process.env.PORT || 3000, getBotStatus = () => ({})) {
   const app = express();
   const server = http.createServer(app);
   const io = new SocketIOServer(server, {
@@ -109,7 +109,12 @@ export function startMultiplayerServer(port = process.env.PORT || 3000) {
   });
 
   app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', rooms: rooms.size, uptime: Math.floor(process.uptime()) });
+    res.json({
+      status: 'ok',
+      rooms: rooms.size,
+      uptime: Math.floor(process.uptime()),
+      ...getBotStatus(),
+    });
   });
 
   if (fs.existsSync(CLIENT_DIST)) {

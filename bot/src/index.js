@@ -43,10 +43,12 @@ if (ffmpegPath && fs.existsSync(ffmpegPath)) {
   process.env.FFMPEG_PATH = ffmpegPath;
 }
 
-const { DISCORD_TOKEN, CLIENT_ID, PORT } = process.env;
-
-// Start Real-Time Multiplayer WebSocket + Activity Web Server
-startMultiplayerServer(Number(PORT) || 3000);
+const { DISCORD_TOKEN: RAW_DISCORD_TOKEN, CLIENT_ID, PORT } = process.env;
+const tokenMatch = String(RAW_DISCORD_TOKEN || '').match(
+  /([A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{20,})/
+);
+const DISCORD_TOKEN = tokenMatch ? tokenMatch[1] : (RAW_DISCORD_TOKEN || '').trim();
+let lastBotError = null;
 
 const client = new Client({
   intents: [
@@ -56,6 +58,14 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+
+// Start Real-Time Multiplayer WebSocket + Activity Web Server
+startMultiplayerServer(Number(PORT) || 3000, () => ({
+  botOnline: client.isReady(),
+  botTag: client.user?.tag || null,
+  hasToken: Boolean(DISCORD_TOKEN),
+  botError: lastBotError,
+}));
 
 process.on('unhandledRejection', (err) => console.error('⚠️ Unhandled Rejection:', err));
 process.on('uncaughtException', (err) => console.error('⚠️ Uncaught Exception:', err));
@@ -596,10 +606,12 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-if (DISCORD_TOKEN && DISCORD_TOKEN.trim()) {
-  client.login(DISCORD_TOKEN.trim()).catch((err) => {
+if (DISCORD_TOKEN) {
+  client.login(DISCORD_TOKEN).catch((err) => {
+    lastBotError = err.message;
     console.error('❌ Discord login failed:', err.message);
   });
 } else {
+  lastBotError = 'DISCORD_TOKEN is empty in Environment Variables';
   console.warn('⚠️ DISCORD_TOKEN is not set yet. Set DISCORD_TOKEN in Environment Variables.');
 }
