@@ -7,8 +7,6 @@ const SYSTEM_INSTRUCTION =
   'ถ้าผู้ใช้สั่งการหรือมีเจตนาที่ตรงกับเครื่องมือ (Tools) เช่น สั่งเข้าห้องเสียง, ออกจากห้อง, เล่นเสียง, ดูตัวแก้ทาง, วิเคราะห์ดราฟต์, ดูสถิติ, แมตช์ล่าสุด, หรือเปิดเกม ให้เรียกใช้เครื่องมือที่เกี่ยวข้องทันที ' +
   'ถ้าผู้ใช้แค่พูดคุย ปรึกษา ถามคำถาม ทักทาย หรือชวนคุยเรื่องเกม ให้ตอบกลับอย่างเป็นธรรมชาติและมีประโยชน์';
 
-const userInteractions = new Map();
-
 function getClient() {
   const rawKey =
     process.env.GEMINI_API_KEY ||
@@ -23,19 +21,16 @@ function getClient() {
 
 export const AGENT_TOOLS = [
   {
-    type: 'function',
     name: 'join_voice',
     description: 'สั่งให้บอทกระโดดเข้าร่วมห้องเสียง (Voice Channel) ที่ผู้ใช้อยู่',
     parameters: { type: 'object', properties: {} },
   },
   {
-    type: 'function',
     name: 'leave_voice',
     description: 'สั่งให้บอทออกจากห้องเสียง (Voice Channel)',
     parameters: { type: 'object', properties: {} },
   },
   {
-    type: 'function',
     name: 'play_sound',
     description: 'เล่นเสียงซาวด์เอฟเฟกต์ Dota 2 ในห้องเสียง',
     parameters: {
@@ -52,7 +47,6 @@ export const AGENT_TOOLS = [
     },
   },
   {
-    type: 'function',
     name: 'say_tts',
     description: 'สั่งให้บอทพูดข้อความที่ต้องการเข้าไปในห้องเสียง',
     parameters: {
@@ -64,7 +58,6 @@ export const AGENT_TOOLS = [
     },
   },
   {
-    type: 'function',
     name: 'counter_hero',
     description: 'ค้นหาตัวแก้ทางและไอเทมสำคัญสำหรับรับมือฮีโร่ Dota 2',
     parameters: {
@@ -76,7 +69,6 @@ export const AGENT_TOOLS = [
     },
   },
   {
-    type: 'function',
     name: 'draft_analysis',
     description: 'วิเคราะห์ดราฟต์ฮีโร่ศัตรูหลายตัวเพื่อหาฮีโร่แก้ทางทั้งทีม',
     parameters: {
@@ -88,7 +80,6 @@ export const AGENT_TOOLS = [
     },
   },
   {
-    type: 'function',
     name: 'get_player_stats',
     description: 'เช็คสถิติโปรไฟล์ Rank และ Winrate ของผู้ใช้หรือเพื่อน',
     parameters: {
@@ -99,7 +90,6 @@ export const AGENT_TOOLS = [
     },
   },
   {
-    type: 'function',
     name: 'get_last_match',
     description: 'เช็คสรุปผลการแข่งขันแมตช์ล่าสุด (KDA, ชนะ/แพ้, ดาเมจ) ของผู้ใช้หรือเพื่อน',
     parameters: {
@@ -110,12 +100,41 @@ export const AGENT_TOOLS = [
     },
   },
   {
-    type: 'function',
     name: 'launch_arena',
     description: 'สร้างปุ่มเปิดมินิเกม Dota 2 Arena (ตี Roshan, แข่งตอบ Trivia) ในห้องเสียง',
     parameters: { type: 'object', properties: {} },
   },
 ];
+
+async function generateWithFallback({ prompt, systemInstruction, tools }) {
+  const client = getClient();
+  if (!client) return null;
+
+  const config = {
+    systemInstruction: systemInstruction || SYSTEM_INSTRUCTION,
+  };
+  if (tools && tools.length > 0) {
+    config.tools = [{ functionDeclarations: tools }];
+  }
+
+  const models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+  let lastErr = null;
+
+  for (const model of models) {
+    try {
+      const res = await client.models.generateContent({
+        model,
+        contents: prompt,
+        config,
+      });
+      return { res, model };
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[GEMINI WARN] Model ${model} failed (${err.message}), trying next...`);
+    }
+  }
+  throw lastErr;
+}
 
 export async function analyzeDraft(enemyInput, discordUserId) {
   const tokens = enemyInput
@@ -133,24 +152,23 @@ export async function analyzeDraft(enemyInput, discordUserId) {
           .join(', ')}`
       : '';
 
-    const interaction = await client.interactions.create({
-      model: 'gemini-3.8-flash',
-      input: `วิเคราะห์การแก้ทางดราฟต์ฝั่งตรงข้าม: ${
-        stats ? stats.enemies.join(', ') : enemyInput
-      }${statContext}`,
-      system_instruction: SYSTEM_INSTRUCTION,
-    });
+    try {
+      const { res, model } = await generateWithFallback({
+        prompt: `วิเคราะห์การแก้ทางดราฟต์ฝั่งตรงข้าม: ${
+          stats ? stats.enemies.join(', ') : enemyInput
+        }${statContext}`,
+        systemInstruction: SYSTEM_INSTRUCTION,
+      });
 
-    if (discordUserId && interaction?.id) {
-      userInteractions.set(discordUserId, interaction.id);
+      return {
+        mode: model,
+        enemies: stats?.enemies || tokens,
+        text: res.text || 'ไม่สามารถวิเคราะห์ได้ในขณะนี้',
+        stats: stats?.topCounters || [],
+      };
+    } catch (err) {
+      console.error('analyzeDraft Gemini error:', err.message);
     }
-
-    return {
-      mode: 'gemini-3.8-flash',
-      enemies: stats?.enemies || tokens,
-      text: interaction.output_text || 'ไม่สามารถวิเคราะห์ได้ในขณะนี้',
-      stats: stats?.topCounters || [],
-    };
   }
 
   if (stats && stats.topCounters.length > 0) {
@@ -181,30 +199,28 @@ export async function askDotaCoach(question, discordUserId) {
   if (!client) {
     return {
       mode: 'offline',
-      text: 'ระบบ AI พร้อมใช้งานเมื่อใส่ GEMINI_API_KEY',
+      text: 'ระบบ AI พร้อมใช้งานเมื่อใส่ GEMINI_API_KEY ใน Render Dashboard',
     };
   }
 
-  const prevId = discordUserId ? userInteractions.get(discordUserId) : undefined;
-  const params = {
-    model: 'gemini-3.8-flash',
-    input: question,
-    system_instruction: SYSTEM_INSTRUCTION,
-  };
-  if (prevId) params.previous_interaction_id = prevId;
-
-  const interaction = await client.interactions.create(params);
-  if (discordUserId && interaction?.id) {
-    userInteractions.set(discordUserId, interaction.id);
+  try {
+    const { res, model } = await generateWithFallback({
+      prompt: question,
+      systemInstruction: SYSTEM_INSTRUCTION,
+    });
+    return {
+      mode: model,
+      text: res.text || 'ไม่มีคำตอบจากระบบ',
+    };
+  } catch (err) {
+    return {
+      mode: 'error',
+      text: `⚠️ ระบบ AI ขัดข้อง: ${err.message}`,
+    };
   }
-
-  return {
-    mode: 'gemini-3.8-flash',
-    text: interaction.output_text || 'ไม่มีคำตอบจากระบบ',
-  };
 }
 
-// ระบบ Agent อัจฉริยะ: ตีความภาษาไทยธรรมชาติและเรียกใช้งานฟังก์ชันอัตโนมัติ
+// ระบบ Autonomous AI Agent: รองรับ Function Calling + บทสนทนาตอบกลับทันใจ (< 2 วินาที)
 export async function runAutonomousAgent(userInput, discordUserId, actions) {
   const client = getClient();
   if (!client) {
@@ -212,38 +228,30 @@ export async function runAutonomousAgent(userInput, discordUserId, actions) {
   }
 
   try {
-    const prevId = discordUserId ? userInteractions.get(discordUserId) : undefined;
-    const params = {
-      model: 'gemini-3.8-flash',
-      input: userInput || 'สวัสดี',
+    const { res } = await generateWithFallback({
+      prompt: userInput || 'สวัสดี',
+      systemInstruction: SYSTEM_INSTRUCTION,
       tools: AGENT_TOOLS,
-      system_instruction: SYSTEM_INSTRUCTION,
-    };
-    if (prevId) params.previous_interaction_id = prevId;
+    });
 
-    const res = await client.interactions.create(params);
-    if (discordUserId && res?.id) {
-      userInteractions.set(discordUserId, res.id);
-    }
-
-    const toolCalls = res.steps?.filter((s) => s.type === 'function_call') || [];
+    const functionCalls = res.functionCalls || [];
     let toolActionSummary = null;
 
-    if (toolCalls.length > 0) {
-      for (const call of toolCalls) {
-        const { name, arguments: args } = call;
+    if (functionCalls.length > 0) {
+      for (const call of functionCalls) {
+        const { name, args } = call;
         if (name === 'join_voice') {
           await actions.onJoinVoice();
-          toolActionSummary = ' เข้าห้องเสียงเรียบร้อยครับ';
+          toolActionSummary = '🔊 เข้าห้องเสียงเรียบร้อยครับ';
         } else if (name === 'leave_voice') {
           await actions.onLeaveVoice();
-          toolActionSummary = ' ออกจากห้องเสียงแล้วครับ';
+          toolActionSummary = '👋 ออกจากห้องเสียงแล้วครับ';
         } else if (name === 'play_sound') {
           await actions.onPlaySound(args?.sound_id);
-          toolActionSummary = ` เล่นเสียง ${args?.sound_id || ''} แล้วครับ`;
+          toolActionSummary = `🎵 เล่นเสียงซาวด์เอฟเฟกต์แล้วครับ`;
         } else if (name === 'say_tts') {
           await actions.onSayTTS(args?.text);
-          toolActionSummary = ` พูดข้อความในห้องเสียงแล้วครับ`;
+          toolActionSummary = `🗣️ พูดข้อความในห้องเสียงแล้วครับ`;
         } else if (name === 'counter_hero') {
           await actions.onCounterHero(args?.hero);
         } else if (name === 'draft_analysis') {
@@ -258,21 +266,8 @@ export async function runAutonomousAgent(userInput, discordUserId, actions) {
       }
     }
 
-    let text = res.output_text || null;
-    if (!text && Array.isArray(res.steps)) {
-      const texts = [];
-      for (const step of res.steps) {
-        if (step.type === 'model_output' && Array.isArray(step.content)) {
-          for (const item of step.content) {
-            if (item?.type === 'text' && item?.text) texts.push(item.text);
-            else if (typeof item === 'string') texts.push(item);
-          }
-        }
-      }
-      if (texts.length > 0) text = texts.join('\n');
-    }
-
-    return text || toolActionSummary || 'สวัสดีครับ มีอะไรให้ผมรับใช้เกี่ยวกับ Dota 2 หรือสั่งการบอทบอกได้เลยครับ!';
+    const text = res.text?.trim() || null;
+    return text || toolActionSummary || 'สวัสดีครับ มีอะไรให้ผมช่วยเกี่ยวกับ Dota 2 หรือสั่งการบอทบอกได้เลยครับ!';
   } catch (err) {
     console.error('Autonomous Agent Error:', err);
     return `⚠️ ระบบ AI ขัดข้อง: ${err.message}`;
