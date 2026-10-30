@@ -240,17 +240,36 @@ function resolveTargetAccount(discordUserId, rawArg) {
   return getLinkedAccountId(discordUserId);
 }
 
-async function handleLinkCommand(discordUser, rawId, replyTarget) {
-  const accountId = linkPlayer(discordUser.id, rawId, discordUser.username);
+async function handleLinkCommand(authorUser, rawArg, replyTarget, mentionedUser = null) {
+  let targetUser = authorUser;
+  let textToParse = rawArg;
+
+  if (mentionedUser) {
+    targetUser = mentionedUser;
+    textToParse = rawArg.replace(/<@!?\d+>/g, '').trim();
+  } else {
+    const mentionMatch = rawArg.match(/<@!?(\d+)>/);
+    if (mentionMatch) {
+      const foundUser = client.users.cache.get(mentionMatch[1]);
+      if (foundUser) {
+        targetUser = foundUser;
+      } else {
+        targetUser = { id: mentionMatch[1], username: `<@${mentionMatch[1]}>` };
+      }
+      textToParse = rawArg.replace(mentionMatch[0], '').trim();
+    }
+  }
+
+  const accountId = linkPlayer(targetUser.id, textToParse, targetUser.username || targetUser.tag);
   if (!accountId) {
-    const msg = 'ระบุ Steam ID / Friend ID ที่ถูกต้อง';
+    const msg = 'ระบุ Steam ID / Friend ID ที่ถูกต้อง เช่น `!link @เพื่อน 123456789`';
     return replyTarget.isInteraction
       ? replyTarget.reply({ content: msg, flags: 64 })
       : replyTarget.reply(msg);
   }
   const embed = new EmbedBuilder()
     .setColor(THEME.dark)
-    .setDescription(`Linked · **${discordUser.username}** → \`${accountId}\``);
+    .setDescription(`Linked · <@${targetUser.id}> → \`${accountId}\``);
   return replyTarget.reply({ embeds: [embed] });
 }
 
@@ -428,7 +447,8 @@ client.once('ready', async () => {
     new SlashCommandBuilder()
       .setName('link')
       .setDescription('Link Dota 2 Friend ID / Steam ID')
-      .addStringOption((o) => o.setName('id').setDescription('Friend ID or Steam ID').setRequired(true)),
+      .addStringOption((o) => o.setName('id').setDescription('Friend ID or Steam ID').setRequired(true))
+      .addUserOption((o) => o.setName('user').setDescription('Target friend to link for (optional)').setRequired(false)),
     new SlashCommandBuilder()
       .setName('stat')
       .setDescription('Live OpenDota player profile')
@@ -528,7 +548,10 @@ client.on('interactionCreate', async (interaction) => {
   if (commandName === 'counter') return handleCounterCommand(interaction.options.getString('hero') || '', replyTarget);
   if (commandName === 'draft') return handleDraftCommand(interaction.options.getString('heroes'), interaction.user.id, replyTarget);
   if (commandName === 'ask') return handleAskCommand(interaction.options.getString('question'), interaction.user.id, replyTarget);
-  if (commandName === 'link') return handleLinkCommand(interaction.user, interaction.options.getString('id'), replyTarget);
+  if (commandName === 'link') {
+    const targetUser = interaction.options.getUser('user') || interaction.user;
+    return handleLinkCommand(interaction.user, interaction.options.getString('id'), replyTarget, targetUser);
+  }
   if (commandName === 'stat') return handleStatCommand(interaction.user.id, interaction.options.getString('id') || '', replyTarget);
   if (commandName === 'lastmatch') return handleLastMatchCommand(interaction.user.id, interaction.options.getString('id') || '', replyTarget);
   if (commandName === 'watch') {
@@ -578,7 +601,8 @@ client.on('messageCreate', async (message) => {
   }
 
   if (lower.startsWith('!link ') || lower.startsWith('/link ')) {
-    return handleLinkCommand(message.author, raw.replace(/^(!|\/)link\s*/i, ''), replyTarget);
+    const firstMention = message.mentions.users.first();
+    return handleLinkCommand(message.author, raw.replace(/^(!|\/)link\s*/i, ''), replyTarget, firstMention);
   }
 
   if (lower === '!stat' || lower === '/stat' || lower.startsWith('!stat ') || lower.startsWith('/stat ')) {
