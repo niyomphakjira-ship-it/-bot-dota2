@@ -201,13 +201,15 @@ export async function askDotaCoach(question, discordUserId) {
 // ระบบ Agent อัจฉริยะ: ตีความภาษาไทยธรรมชาติและเรียกใช้งานฟังก์ชันอัตโนมัติ
 export async function runAutonomousAgent(userInput, discordUserId, actions) {
   const client = getClient();
-  if (!client) return null;
+  if (!client) {
+    return '⚠️ ระบบ AI ยังไม่พร้อมใช้งาน: กรุณาใส่ `GEMINI_API_KEY` ใน Render Dashboard (Environment Variables) ครับ';
+  }
 
   try {
     const prevId = discordUserId ? userInteractions.get(discordUserId) : undefined;
     const params = {
       model: 'gemini-3.8-flash',
-      input: userInput,
+      input: userInput || 'สวัสดี',
       tools: AGENT_TOOLS,
       system_instruction: SYSTEM_INSTRUCTION,
     };
@@ -219,25 +221,54 @@ export async function runAutonomousAgent(userInput, discordUserId, actions) {
     }
 
     const toolCalls = res.steps?.filter((s) => s.type === 'function_call') || [];
+    let toolActionSummary = null;
 
     if (toolCalls.length > 0) {
       for (const call of toolCalls) {
         const { name, arguments: args } = call;
-        if (name === 'join_voice') await actions.onJoinVoice();
-        else if (name === 'leave_voice') await actions.onLeaveVoice();
-        else if (name === 'play_sound') await actions.onPlaySound(args?.sound_id);
-        else if (name === 'say_tts') await actions.onSayTTS(args?.text);
-        else if (name === 'counter_hero') await actions.onCounterHero(args?.hero);
-        else if (name === 'draft_analysis') await actions.onDraftAnalysis(args?.heroes);
-        else if (name === 'get_player_stats') await actions.onGetStats(args?.target);
-        else if (name === 'get_last_match') await actions.onGetLastMatch(args?.target);
-        else if (name === 'launch_arena') await actions.onLaunchArena();
+        if (name === 'join_voice') {
+          await actions.onJoinVoice();
+          toolActionSummary = ' เข้าห้องเสียงเรียบร้อยครับ';
+        } else if (name === 'leave_voice') {
+          await actions.onLeaveVoice();
+          toolActionSummary = ' ออกจากห้องเสียงแล้วครับ';
+        } else if (name === 'play_sound') {
+          await actions.onPlaySound(args?.sound_id);
+          toolActionSummary = ` เล่นเสียง ${args?.sound_id || ''} แล้วครับ`;
+        } else if (name === 'say_tts') {
+          await actions.onSayTTS(args?.text);
+          toolActionSummary = ` พูดข้อความในห้องเสียงแล้วครับ`;
+        } else if (name === 'counter_hero') {
+          await actions.onCounterHero(args?.hero);
+        } else if (name === 'draft_analysis') {
+          await actions.onDraftAnalysis(args?.heroes);
+        } else if (name === 'get_player_stats') {
+          await actions.onGetStats(args?.target);
+        } else if (name === 'get_last_match') {
+          await actions.onGetLastMatch(args?.target);
+        } else if (name === 'launch_arena') {
+          await actions.onLaunchArena();
+        }
       }
     }
 
-    return res.output_text || null;
+    let text = res.output_text || null;
+    if (!text && Array.isArray(res.steps)) {
+      const texts = [];
+      for (const step of res.steps) {
+        if (step.type === 'model_output' && Array.isArray(step.content)) {
+          for (const item of step.content) {
+            if (item?.type === 'text' && item?.text) texts.push(item.text);
+            else if (typeof item === 'string') texts.push(item);
+          }
+        }
+      }
+      if (texts.length > 0) text = texts.join('\n');
+    }
+
+    return text || toolActionSummary || 'สวัสดีครับ มีอะไรให้ผมรับใช้เกี่ยวกับ Dota 2 หรือสั่งการบอทบอกได้เลยครับ!';
   } catch (err) {
-    console.error('Autonomous Agent Error:', err.message);
-    return null;
+    console.error('Autonomous Agent Error:', err);
+    return `⚠️ ระบบ AI ขัดข้อง: ${err.message}`;
   }
 }

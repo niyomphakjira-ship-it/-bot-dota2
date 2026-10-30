@@ -64,6 +64,7 @@ startMultiplayerServer(Number(PORT) || 3000, () => ({
   botOnline: client.isReady(),
   botTag: client.user?.tag || null,
   hasToken: Boolean(DISCORD_TOKEN),
+  hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
   botError: lastBotError,
 }));
 
@@ -635,12 +636,15 @@ client.on('messageCreate', async (message) => {
     message.reference?.messageId &&
     (await message.channel.messages.fetch(message.reference.messageId).catch(() => null))?.author?.id ===
       client.user.id;
-  const startsWithBot = /^(บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท)[,\s]+/i.test(raw) || /^บอท$/i.test(raw);
+  const startsWithBot =
+    /^(บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท|น้องบอท)/i.test(raw) ||
+    lower.startsWith('บอท') ||
+    lower.startsWith('bot');
 
   if (isMentioned || isReply || startsWithBot || message.channel.isDMBased()) {
     let cleanPrompt = raw
       .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
-      .replace(/^(บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท)[,\s]*/i, '')
+      .replace(/^(บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท|น้องบอท)[,\s:]*/i, '')
       .trim();
 
     if (!cleanPrompt) cleanPrompt = 'สวัสดี';
@@ -674,6 +678,7 @@ client.on('messageCreate', async (message) => {
       }
     } catch (agentErr) {
       console.error('Autonomous Agent Handler Error:', agentErr.message);
+      return message.reply(`⚠️ บอททำงานขัดข้อง: ${agentErr.message}`);
     }
   }
 });
