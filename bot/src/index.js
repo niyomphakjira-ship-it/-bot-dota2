@@ -573,9 +573,14 @@ client.on('interactionCreate', async (interaction) => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  const raw = message.content.trim();
+  const raw = message.content?.trim() || '';
   const lower = raw.toLowerCase();
   const replyTarget = { isInteraction: false, reply: message.reply.bind(message) };
+
+  console.log(`[MSG] from="${message.author.tag}" in="${message.channel?.name || 'DM'}" content=${JSON.stringify(raw)}`);
+  if (!raw) {
+    console.warn('⚠️ [EMPTY CONTENT] Message received with empty content! Please enable "MESSAGE CONTENT INTENT" in Discord Developer Portal.');
+  }
 
   if (lower === '!join' || lower === '/join') return handleJoinVoice(message.member?.voice?.channel, replyTarget);
   if (lower === '!leave' || lower === '/leave') return handleLeaveVoice(message.guildId, replyTarget);
@@ -653,9 +658,10 @@ client.on('messageCreate', async (message) => {
       .trim();
 
     if (!cleanPrompt) cleanPrompt = 'สวัสดี';
+    console.log(`[AI TRIGGER] user="${message.author.tag}" prompt=${JSON.stringify(cleanPrompt)}`);
 
     try {
-      await message.channel.sendTyping();
+      await message.channel.sendTyping().catch(() => {});
       const actions = {
         onJoinVoice: async () => handleJoinVoice(message.member?.voice?.channel, replyTarget),
         onLeaveVoice: async () => handleLeaveVoice(message.guildId, replyTarget),
@@ -678,12 +684,18 @@ client.on('messageCreate', async (message) => {
       };
 
       const aiReply = await runAutonomousAgent(cleanPrompt, message.author.id, actions);
+      console.log(`[AI REPLY READY] length=${aiReply?.length}`);
       if (aiReply) {
-        return message.reply(aiReply.slice(0, 1990));
+        return message.reply(aiReply.slice(0, 1990)).catch(async (replyErr) => {
+          console.error('[REPLY ERROR, FALLBACK TO SEND]', replyErr.message);
+          return message.channel.send(aiReply.slice(0, 1990)).catch((sendErr) => {
+            console.error('[SEND ERROR TOO]', sendErr.message);
+          });
+        });
       }
     } catch (agentErr) {
-      console.error('Autonomous Agent Handler Error:', agentErr.message);
-      return message.reply(`⚠️ บอททำงานขัดข้อง: ${agentErr.message}`);
+      console.error('Autonomous Agent Handler Error:', agentErr);
+      return message.channel.send(`⚠️ บอททำงานขัดข้อง: ${agentErr.message}`).catch(() => {});
     }
   }
 });

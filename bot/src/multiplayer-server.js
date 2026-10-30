@@ -8,6 +8,31 @@ import { Server as SocketIOServer } from 'socket.io';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(__dirname, '..', '..', 'activity-client', 'dist');
 
+export const serverLogs = [];
+const origLog = console.log;
+const origErr = console.error;
+const origWarn = console.warn;
+
+function recordLog(level, args) {
+  const line = `[${new Date().toISOString().slice(11, 19)}] [${level}] ` +
+    args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+  serverLogs.push(line);
+  if (serverLogs.length > 100) serverLogs.shift();
+}
+
+console.log = (...args) => {
+  recordLog('INFO', args);
+  origLog.apply(console, args);
+};
+console.error = (...args) => {
+  recordLog('ERROR', args);
+  origErr.apply(console, args);
+};
+console.warn = (...args) => {
+  recordLog('WARN', args);
+  origWarn.apply(console, args);
+};
+
 export const TRIVIA_BANK = [
   {
     q: 'ไอเทมใดใช้ตีเปิดเพื่อปิด Passive (Break) ของ Bristleback และ PA?',
@@ -113,8 +138,13 @@ export function startMultiplayerServer(port = process.env.PORT || 3000, getBotSt
       status: 'ok',
       rooms: rooms.size,
       uptime: Math.floor(process.uptime()),
+      recentLogs: serverLogs.slice(-10),
       ...getBotStatus(),
     });
+  });
+
+  app.get('/logs', (_req, res) => {
+    res.type('text/plain').send(serverLogs.join('\n') || 'No logs recorded yet');
   });
 
   if (fs.existsSync(CLIENT_DIST)) {
