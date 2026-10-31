@@ -9,19 +9,47 @@ const STORE_PATH = path.join(DATA_DIR, 'store.json');
 const OPENDOTA_BASE = 'https://api.opendota.com/api';
 const STEAM64_BASE = 76561197960265728n;
 
-// Ensure data directory & store exist
+export const DEFAULT_SEEDED_PLAYERS = {
+  '647785506121449473': { accountId: '947857860', discordTag: 'tee2147' },
+  '1319873624856985733': { accountId: '1204317380', discordTag: 'SleepfrozeN' },
+};
+
+export const DEFAULT_WATCH_CHANNELS = {
+  '1498540558954795251': process.env.DEFAULT_WATCH_CHANNEL_ID || '1498542847106875492', // SleepKnight Gaming -> #chat-all
+};
+
+// Ensure data directory & store exist with defaults
 function loadStore() {
+  let store = { players: {}, watchChannels: {} };
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    if (!fs.existsSync(STORE_PATH)) {
-      const initial = { players: {}, watchChannels: {} };
-      fs.writeFileSync(STORE_PATH, JSON.stringify(initial, null, 2));
-      return initial;
+    if (fs.existsSync(STORE_PATH)) {
+      store = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
     }
-    return JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
   } catch {
-    return { players: {}, watchChannels: {} };
+    store = { players: {}, watchChannels: {} };
   }
+
+  if (!store.players) store.players = {};
+  if (!store.watchChannels) store.watchChannels = {};
+
+  // Seed default players if not already recorded
+  for (const [dId, pData] of Object.entries(DEFAULT_SEEDED_PLAYERS)) {
+    if (!store.players[dId]) {
+      store.players[dId] = {
+        accountId: pData.accountId,
+        discordTag: pData.discordTag,
+        lastMatchId: null,
+      };
+    }
+  }
+
+  // Seed default watch channel if none is set
+  if (Object.keys(store.watchChannels).length === 0) {
+    store.watchChannels = { ...DEFAULT_WATCH_CHANNELS };
+  }
+
+  return store;
 }
 
 function saveStore(store) {
@@ -327,8 +355,10 @@ export async function getStatisticalDraftCounters(enemyTokens) {
   };
 }
 
-// Background Match Poller (Auto Match Alerts)
-export function startMatchWatcher(client, buildAlertEmbed) {
+// Background Match Poller (Auto Match Alerts - checks every 90 seconds)
+export function startMatchWatcher(client, onNewMatch) {
+  console.log('[WATCHER] Background Match Poller initialized (Interval: 90s)');
+
   setInterval(async () => {
     try {
       const store = loadStore();
@@ -340,31 +370,44 @@ export function startMatchWatcher(client, buildAlertEmbed) {
         if (!playerInfo.accountId) continue;
         try {
           const match = await getLastMatch(playerInfo.accountId);
+          if (!match?.matchId) continue;
+
+          // First run for this player: cache the latest match ID so we don't spam old matches
           if (!playerInfo.lastMatchId) {
             playerInfo.lastMatchId = match.matchId;
             dirty = true;
+            console.log(`[WATCHER INIT] user=${discordUserId} account=${playerInfo.accountId} lastMatchId=${match.matchId}`);
             continue;
           }
 
-          if (match.matchId !== playerInfo.lastMatchId) {
+          // New match detected!
+          if (String(match.matchId) !== String(playerInfo.lastMatchId)) {
+            console.log(`[WATCHER NEW MATCH] user=${discordUserId} newMatchId=${match.matchId} (old=${playerInfo.lastMatchId})`);
             playerInfo.lastMatchId = match.matchId;
             dirty = true;
 
             for (const [, channelId] of guildChannelEntries) {
               const ch = await client.channels.fetch(channelId).catch(() => null);
               if (ch && ch.isTextBased()) {
-                const embed = buildAlertEmbed(discordUserId, match);
-                await ch.send({ embeds: [embed] }).catch(() => {});
+                if (typeof onNewMatch === 'function') {
+                  const res = await onNewMatch(ch, discordUserId, match).catch((e) => {
+                    console.error('[WATCHER HANDLER ERROR]:', e.message);
+                  });
+                  // Fallback if onNewMatch returned an embed directly
+                  if (res && res.data) {
+                    await ch.send({ embeds: [res] }).catch(() => {});
+                  }
+                }
               }
             }
           }
         } catch {
-          // ignore transient OpenDota rate limits
+          // ignore transient OpenDota rate limits or connection blips
         }
       }
       if (dirty) saveStore(store);
     } catch (err) {
       console.error('MatchWatcher error:', err.message);
     }
-  }, 180_000); // Check every 3 minutes
+  }, 90_000); // Check every 90 seconds
 }

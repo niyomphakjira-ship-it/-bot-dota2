@@ -498,11 +498,55 @@ function buildInfoEmbed() {
 client.once('ready', async () => {
   console.log(`🤖 Logged in as: ${client.user.tag}`);
 
-  // Start Automatic Match Alert Poller
-  startMatchWatcher(client, (discordUserId, match) => {
-    const embed = buildMatchEmbed('', match);
-    embed.setDescription(`<@${discordUserId}>\n` + embed.data.description);
-    return embed;
+  // Start Automatic Match Alert Poller with STRATZ deep card & savage AI roast
+  startMatchWatcher(client, async (channel, discordUserId, match) => {
+    try {
+      console.log(`[AUTO MATCH ALERT] Triggered for user ${discordUserId}, match #${match.matchId}`);
+
+      // 1. Fetch full match details with STRATZ analytics
+      const matchData = await getMatchById(match.matchId).catch(() => null);
+
+      let cardEmbed = null;
+      let extraStats = '';
+
+      if (matchData) {
+        cardEmbed = buildMatchCardEmbed(matchData, match.hero);
+        const player = matchData.players?.find((p) => p.hero.toLowerCase() === match.hero.toLowerCase());
+        if (player) {
+          extraStats = `\nสถิติของผู้เล่น: ฮีโร่ ${player.hero}, ผล=${player.won ? 'ชนะ' : 'แพ้'}, KDA=${player.kda}, Damage=${(player.heroDamage || 0).toLocaleString()}, NW=${(player.networth || 0).toLocaleString()}, GPM=${player.gpm || 0}, CS=${player.lastHits || 0}/${player.denies || 0}, STRATZ IMP=${player.imp !== null ? player.imp : 'N/A'}`;
+        }
+      } else {
+        cardEmbed = buildMatchEmbed('🚨 ', match);
+      }
+
+      // 2. Generate a savage AI roast from Gemini
+      let roastText = `🚨 **จบแมตช์ใหม่สดๆ ร้อนๆ!** <@${discordUserId}> เพิ่งเล่น **${match.hero}** จบในแมตช์ \`#${match.matchId}\` (${match.won ? '🏆 ชนะ' : '💀 แพ้'})!`;
+
+      try {
+        const aiPrompt =
+          `[เหตุการณ์]: ผู้เล่น Discord ID <@${discordUserId}> เพิ่งเล่นแมตช์ Dota 2 จบสดๆ ร้อนๆ!\n` +
+          `แมตช์ #${match.matchId}\n` +
+          `ฮีโร่: ${match.hero}\n` +
+          `ผลการแข่งขัน: ${match.won ? 'ชนะ (Victory)' : 'แพ้ (Defeat)'}\n` +
+          `KDA: ${match.kills}/${match.deaths}/${match.assists}\n` +
+          `GPM: ${match.gpm}, XPM: ${match.xpm}, ดาเมจ: ${match.heroDamage}\n` +
+          `${extraStats}\n\n` +
+          `[คำสั่ง]: ในฐานะบอท Dota 2 ปากแซ่บ จอมขยี้ตัวตึงประจำกิลด์ SleepKnight Gaming ให้เขียนข้อความแท็กแซว/ขยี้หรืออวยผู้เล่นคนนี้สั้นๆ 2-3 ประโยคเป็นภาษาไทยแบบเกมเมอร์ตัวจริง คมคาย กวนๆ เฮฮา (ไม่ต้องยาวเกินไป)`;
+
+        const res = await askDotaCoach(aiPrompt, discordUserId);
+        if (res?.text && !res.text.includes('ระบบ AI')) {
+          roastText = `🚨 <@${discordUserId}>\n${res.text}`;
+        }
+      } catch (_aiErr) {}
+
+      // 3. Send message to channel with both roast commentary and STRATZ embed card
+      await channel.send({
+        content: roastText.slice(0, 1990),
+        embeds: cardEmbed ? [cardEmbed] : [],
+      });
+    } catch (alertErr) {
+      console.error('[AUTO MATCH ALERT ERROR]:', alertErr);
+    }
   });
 
   const slashCommands = [
