@@ -787,7 +787,7 @@ client.on('messageCreate', async (message) => {
   const matchIdMatch = raw.match(/\b(\d{10})\b/);
   const hasIntentOrMatch =
     Boolean(matchIdMatch) ||
-    /^(วิเคราะห์|ส่อง|เช็ค|ดูฟอร์ม|แก้ทาง)/i.test(raw);
+    /^(วิเคราะห์|ส่อง|เช็ค|ดูฟอร์ม|แก้ทาง|ช่วย|ขอ|บอกหน่อย|สอน)/i.test(raw);
 
   if (isMentioned || isReply || startsWithBot || hasIntentOrMatch || message.channel.isDMBased()) {
     let cleanPrompt = raw
