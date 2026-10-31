@@ -10,6 +10,7 @@ import {
   REST,
   Routes,
   SlashCommandBuilder,
+  AttachmentBuilder,
 } from 'discord.js';
 import {
   joinVoiceChannel,
@@ -36,7 +37,8 @@ import {
   setWatchChannel,
   startMatchWatcher,
 } from './opendota.js';
-import { analyzeDraft, askDotaCoach, runAutonomousAgent } from './ai-coach.js';
+import { analyzeDraft, askDotaCoach, analyzeSituationalBuild, runAutonomousAgent } from './ai-coach.js';
+import { generateMatchBanner } from './match-image.js';
 import { startMultiplayerServer } from './multiplayer-server.js';
 
 dotenv.config();
@@ -337,7 +339,7 @@ async function handleLastMatchCommand(discordUserId, rawArg, replyTarget) {
   }
 }
 
-function buildMatchCardEmbed(data, targetQuery) {
+function buildMatchCardEmbed(data, targetQuery, hasBanner = false) {
   const winTeam = data.radiantWin ? 'Radiant Victory' : 'Dire Victory';
   const scoreText = `Radiant **${data.radiantScore}** — **${data.direScore}** Dire · ${data.duration}`;
 
@@ -386,7 +388,7 @@ function buildMatchCardEmbed(data, targetQuery) {
     )
     .join('\n');
 
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(data.radiantWin ? THEME.win : THEME.loss)
     .setTitle(`Match #${data.matchId} · ${winTeam}`)
     .setDescription(
@@ -395,6 +397,12 @@ function buildMatchCardEmbed(data, targetQuery) {
       `**Top Performers (Damage):**\n${topDamagers}`
     )
     .setFooter({ text: data.hasStratz ? 'Powered by OpenDota + STRATZ Analytics' : 'Powered by OpenDota' });
+
+  if (hasBanner) {
+    embed.setImage('attachment://match-banner.png');
+  }
+
+  return embed;
 }
 
 async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
@@ -404,10 +412,38 @@ async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
   await deferIfNeeded(replyTarget);
   try {
     const data = await getMatchById(cleanId);
-    const embed = buildMatchCardEmbed(data, targetQuery);
-    return sendReply(replyTarget, { embeds: [embed] });
+    const bannerBuffer = await generateMatchBanner(data, targetQuery).catch(() => null);
+    const embed = buildMatchCardEmbed(data, targetQuery, Boolean(bannerBuffer));
+    const payload = { embeds: [embed] };
+    if (bannerBuffer) {
+      payload.files = [new AttachmentBuilder(bannerBuffer, { name: 'match-banner.png' })];
+    }
+    return sendReply(replyTarget, payload);
   } catch (err) {
     return sendReply(replyTarget, { content: `⚠️ ตรวจสอบแมตช์ #${cleanId} ไม่สำเร็จ: ${err.message}` });
+  }
+}
+
+async function handleBuildCommand(heroText, enemiesText, allyText, replyTarget) {
+  if (!heroText || !heroText.trim()) {
+    const msg = 'ระบุชื่อฮีโร่ เช่น `!build slark vs doom bloodseeker` หรือ `!combo juggernaut with cm`';
+    return replyTarget.isInteraction
+      ? replyTarget.reply({ content: msg, flags: 64 })
+      : replyTarget.reply(msg);
+  }
+
+  await deferIfNeeded(replyTarget);
+  try {
+    const res = await analyzeSituationalBuild(heroText, enemiesText, allyText);
+    const embed = new EmbedBuilder()
+      .setColor(THEME.accent)
+      .setTitle(`⚔️ Situational Build & Combo Guide · ${res.hero}`)
+      .setDescription(res.text.slice(0, 3900))
+      .setFooter({ text: 'SleepKnight AI Coach · Live Situational Itemization' });
+
+    return sendReply(replyTarget, { embeds: [embed] });
+  } catch (err) {
+    return sendReply(replyTarget, { content: `Error: ${err.message}` });
   }
 }
 
@@ -503,14 +539,19 @@ client.once('ready', async () => {
     try {
       console.log(`[AUTO MATCH ALERT] Triggered for user ${discordUserId}, match #${match.matchId}`);
 
-      // 1. Fetch full match details with STRATZ analytics
+      // 1. Fetch full match details with STRATZ analytics and banner image
       const matchData = await getMatchById(match.matchId).catch(() => null);
 
       let cardEmbed = null;
       let extraStats = '';
+      let bannerFile = null;
 
       if (matchData) {
-        cardEmbed = buildMatchCardEmbed(matchData, match.hero);
+        const bannerBuffer = await generateMatchBanner(matchData, match.hero).catch(() => null);
+        if (bannerBuffer) {
+          bannerFile = new AttachmentBuilder(bannerBuffer, { name: 'match-banner.png' });
+        }
+        cardEmbed = buildMatchCardEmbed(matchData, match.hero, Boolean(bannerBuffer));
         const player = matchData.players?.find((p) => p.hero.toLowerCase() === match.hero.toLowerCase());
         if (player) {
           extraStats = `\nสถิติของผู้เล่น: ฮีโร่ ${player.hero}, ผล=${player.won ? 'ชนะ' : 'แพ้'}, KDA=${player.kda}, Damage=${(player.heroDamage || 0).toLocaleString()}, NW=${(player.networth || 0).toLocaleString()}, GPM=${player.gpm || 0}, CS=${player.lastHits || 0}/${player.denies || 0}, STRATZ IMP=${player.imp !== null ? player.imp : 'N/A'}`;
@@ -543,10 +584,11 @@ client.once('ready', async () => {
         }
       } catch (_aiErr) {}
 
-      // 3. Send message to channel with both roast commentary and STRATZ embed card
+      // 3. Send message to channel with both roast commentary and STRATZ embed card + banner image
       await channel.send({
         content: roastText.slice(0, 1990),
         embeds: cardEmbed ? [cardEmbed] : [],
+        files: bannerFile ? [bannerFile] : [],
       });
     } catch (alertErr) {
       console.error('[AUTO MATCH ALERT ERROR]:', alertErr);
@@ -594,6 +636,17 @@ client.once('ready', async () => {
     new SlashCommandBuilder()
       .setName('watch')
       .setDescription('Set current channel for auto match alerts'),
+    new SlashCommandBuilder()
+      .setName('build')
+      .setDescription('AI Situational Item Build & Counter Guide')
+      .addStringOption((o) => o.setName('hero').setDescription('ฮีโร่ที่เราเล่น เช่น slark, pa, juggernaut').setRequired(true))
+      .addStringOption((o) => o.setName('vs').setDescription('ฮีโร่ศัตรูที่ต้องแก้ทาง เช่น doom bloodseeker').setRequired(false))
+      .addStringOption((o) => o.setName('ally').setDescription('ฮีโร่เพื่อนร่วมทีมที่ต้องการหาคอมโบด้วย').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('combo')
+      .setDescription('AI Hero Combo & Lane Partner Guide')
+      .addStringOption((o) => o.setName('hero').setDescription('ฮีโร่ที่เราเล่น เช่น juggernaut, magnus').setRequired(true))
+      .addStringOption((o) => o.setName('ally').setDescription('ฮีโร่เพื่อนร่วมทีม (ถ้ามี)').setRequired(false)),
     new SlashCommandBuilder().setName('activity').setDescription('Launch Multiplayer Dota 2 Arena'),
     new SlashCommandBuilder().setName('info').setDescription('Commands'),
   ].map((c) => c.toJSON());
@@ -681,6 +734,22 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (commandName === 'counter') return handleCounterCommand(interaction.options.getString('hero') || '', replyTarget);
   if (commandName === 'draft') return handleDraftCommand(interaction.options.getString('heroes'), interaction.user.id, replyTarget);
+  if (commandName === 'build') {
+    return handleBuildCommand(
+      interaction.options.getString('hero'),
+      interaction.options.getString('vs') || '',
+      interaction.options.getString('ally') || '',
+      replyTarget
+    );
+  }
+  if (commandName === 'combo') {
+    return handleBuildCommand(
+      interaction.options.getString('hero'),
+      '',
+      interaction.options.getString('ally') || '',
+      replyTarget
+    );
+  }
   if (commandName === 'ask') return handleAskCommand(interaction.options.getString('question'), interaction.user.id, replyTarget);
   if (commandName === 'link') {
     const targetUser = interaction.options.getUser('user') || interaction.user;
@@ -736,6 +805,22 @@ client.on('messageCreate', async (message) => {
     return handleDraftCommand(raw.replace(/^(!|\/)draft\s*/i, ''), message.author.id, replyTarget);
   }
 
+  if (lower.startsWith('!build ') || lower.startsWith('/build ')) {
+    const rawArgs = raw.replace(/^(!|\/)build\s*/i, '').trim();
+    const parts = rawArgs.split(/\s+(vs|แก้ทาง|เจอ)\s+/i);
+    const hero = parts[0]?.trim();
+    const vs = parts[2]?.trim() || '';
+    return handleBuildCommand(hero, vs, '', replyTarget);
+  }
+
+  if (lower.startsWith('!combo ') || lower.startsWith('/combo ')) {
+    const rawArgs = raw.replace(/^(!|\/)combo\s*/i, '').trim();
+    const parts = rawArgs.split(/\s+(with|คู่กับ|กับ)\s+/i);
+    const hero = parts[0]?.trim();
+    const ally = parts[2]?.trim() || '';
+    return handleBuildCommand(hero, '', ally, replyTarget);
+  }
+
   if (lower.startsWith('!ask ') || lower.startsWith('/ask ')) {
     return handleAskCommand(raw.replace(/^(!|\/)ask\s*/i, ''), message.author.id, replyTarget);
   }
@@ -787,7 +872,7 @@ client.on('messageCreate', async (message) => {
   const matchIdMatch = raw.match(/\b(\d{10})\b/);
   const hasIntentOrMatch =
     Boolean(matchIdMatch) ||
-    /^(วิเคราะห์|ส่อง|เช็ค|ดูฟอร์ม|แก้ทาง|ช่วย|ขอ|บอกหน่อย|สอน)/i.test(raw);
+    /^(วิเคราะห์|ส่อง|เช็ค|ดูฟอร์ม|แก้ทาง|ช่วย|ขอ|บอกหน่อย|สอน|ออกของ|บิลด์|build|combo|คอมโบ)/i.test(raw);
 
   if (isMentioned || isReply || startsWithBot || hasIntentOrMatch || message.channel.isDMBased()) {
     let cleanPrompt = raw
@@ -826,6 +911,7 @@ client.on('messageCreate', async (message) => {
         },
         onCounterHero: async (hero) => handleCounterCommand(hero, replyTarget),
         onDraftAnalysis: async (heroes) => handleDraftCommand(heroes, message.author.id, replyTarget),
+        onRecommendBuild: async (hero, enemies, allies) => handleBuildCommand(hero, enemies, allies, replyTarget),
         onGetStats: async (target) => handleStatCommand(message.author.id, target || '', replyTarget),
         onGetLastMatch: async (target) => handleLastMatchCommand(message.author.id, target || '', replyTarget),
         onInspectMatch: async (mId, hero) => handleInspectMatchCommand(mId, hero, replyTarget),
@@ -835,12 +921,17 @@ client.on('messageCreate', async (message) => {
       // ถ้าในข้อความมีรหัสแมตช์ 10 หลักชัดเจน ให้ดึงสถิติ OpenDota + STRATZ มารอไว้ล่วงหน้า
       let extraContext = '';
       let matchCardEmbed = null;
+      let bannerFile = null;
 
       if (matchIdMatch && !raw.startsWith('!match') && !raw.startsWith('/match')) {
         try {
           const matchData = await getMatchById(matchIdMatch[1]);
           if (matchData) {
-            matchCardEmbed = buildMatchCardEmbed(matchData, raw);
+            const bannerBuffer = await generateMatchBanner(matchData, raw).catch(() => null);
+            if (bannerBuffer) {
+              bannerFile = new AttachmentBuilder(bannerBuffer, { name: 'match-banner.png' });
+            }
+            matchCardEmbed = buildMatchCardEmbed(matchData, raw, Boolean(bannerBuffer));
 
             const playerSummaries = (matchData.players || []).map((p) => {
               const impStr = p.imp !== null ? `${p.imp > 0 ? '+' : ''}${p.imp} (${p.impComment || ''})` : 'N/A';
@@ -868,6 +959,9 @@ client.on('messageCreate', async (message) => {
         const replyPayload = { content: aiReply.slice(0, 1990) };
         if (matchCardEmbed) {
           replyPayload.embeds = [matchCardEmbed];
+        }
+        if (bannerFile) {
+          replyPayload.files = [bannerFile];
         }
         return message.reply(replyPayload).catch(async (replyErr) => {
           console.error('[REPLY ERROR, FALLBACK TO SEND]', replyErr.message);

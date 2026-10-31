@@ -4,11 +4,11 @@ import { getStatisticalDraftCounters } from './opendota.js';
 const SYSTEM_INSTRUCTION =
   'คุณคือบอท AI Dota 2 อัจฉริยะประจำเซิร์ฟเวอร์ Discord "SleepKnight Gaming" ' +
   'บุคลิก: สุภาพ พูดจาไพเราะ มีหางเสียง (ครับ/ท่าน) เป็นกันเอง อารมณ์ดี ฉลาด วิเคราะห์ตรงประเด็น มีอารมณ์ขันและแซวเบาๆ อย่างเป็นมิตรและน่ารัก ไม่ใช้คำหยาบคาย ให้เกียรติผู้เล่นทุกคน ' +
-  'เมื่อวิเคราะห์ผลงานผู้เล่นหรือแมตช์: ' +
+  'ความเชี่ยวชาญพิเศษ: ' +
   '- วิเคราะห์ตัวเลขสถิติอย่างตรงไปตรงมา ทั้ง KDA, เลน, Networth, CS, STRATZ IMP Score ' +
-  '- ถ้าคะแนนติดลบหรือฟอร์มตก ให้แซวหยอกล้ออย่างสุภาพน่ารักและให้กำลังใจ ' +
-  '- ถ้าเล่นดีหรือแบก ให้กล่าวชื่นชมอย่างจริงใจ ' +
-  'ถ้าผู้ใช้สั่งการหรือมีเจตนาที่ตรงกับเครื่องมือ (Tools) เช่น สั่งเข้าห้องเสียง, ออกจากห้อง, เล่นเสียง, ดูตัวแก้ทาง, วิเคราะห์ดราฟต์, ดูสถิติ, แมตช์ล่าสุด, ดูรหัสแมตช์ หรือเปิดเกม ให้เรียกใช้เครื่องมือที่เกี่ยวข้องทันที ' +
+  '- เชี่ยวชาญการแนะนำการออกไอเทมแก้ทางตามสถานการณ์จริง (Situational Item Builds) เช่น แนะนำ Linken\'s Sphere/Lotus Orb เมื่อเจอ single-target nukes/disables (Doom, Rupture, Legion Duel), MKB/Bloodthorn เมื่อเจอ Evasion (PA, Windranger), Silver Edge เมื่อเจอตัว Passive แกร่ง (Bristleback, Spectre), Spirit Vessel/Skadi/Shiva เมื่อเจอตัวฮีล/รีเจนเลือดจัด (Alchemist, Morphling, Necrophos), BKB/Aeon Disk เมื่อเจอ Magic Burst หรือ Stun ต่อเนื่อง, Nullifier เมื่อเจอไอเทมหนี/บัฟ (Ghost, Force, Glimmer, Aeon) ' +
+  '- เชี่ยวชาญคอมโบฮีโร่เลนคู่และทีมไฟต์ เช่น Stun + Blade Fury, Setup + Hook, Reverse Polarity + AoE Burst พร้อมอธิบายสเต็ปการกดสกิล ' +
+  'ถ้าผู้ใช้สั่งการหรือมีเจตนาที่ตรงกับเครื่องมือ (Tools) เช่น สั่งเข้าห้องเสียง, ออกจากห้อง, เล่นเสียง, ดูตัวแก้ทาง, วิเคราะห์ดราฟต์, ดูสถิติ, แมตช์ล่าสุด, ดูรหัสแมตช์, แนะนำการออกของ/คอมโบ หรือเปิดเกม ให้เรียกใช้เครื่องมือที่เกี่ยวข้องทันที ' +
   'ถ้าผู้ใช้พูดคุย ตักเตือน ทักทาย ปรึกษา หรือขอให้ปรับน้ำเสียง ให้ตอบรับอย่างสุภาพ ไพเราะ และน่ารักเสมอ';
 
 function getClient() {
@@ -118,6 +118,19 @@ export const AGENT_TOOLS = [
         target_hero: { type: 'string', description: 'ชื่อฮีโร่หรือชื่อผู้เล่นที่ต้องการตรวจดู เช่น zeus, sleepknight' },
       },
       required: ['match_id'],
+    },
+  },
+  {
+    name: 'recommend_build',
+    description: 'แนะนำการออกไอเทมแก้ทางตามสถานการณ์จริง (Situational Item Build) และคอมโบฮีโร่ เมื่อเจอกับศัตรูเฉพาะตัว',
+    parameters: {
+      type: 'object',
+      properties: {
+        hero: { type: 'string', description: 'ชื่อฮีโร่ที่เราเล่น เช่น slark, pa, zeus, invoker' },
+        enemies: { type: 'string', description: 'รายชื่อฮีโร่ศัตรูที่ต้องการแก้ทาง เช่น "bloodseeker doom", "tinker"' },
+        allies: { type: 'string', description: 'รายชื่อเพื่อนร่วมทีมที่ต้องการหาคอมโบด้วย (ถ้ามี)' },
+      },
+      required: ['hero'],
     },
   },
 ];
@@ -236,6 +249,44 @@ export async function askDotaCoach(question, discordUserId) {
   }
 }
 
+export async function analyzeSituationalBuild(hero, enemiesText = '', alliesText = '', discordUserId = '') {
+  const client = getClient();
+  if (!client) {
+    return {
+      hero,
+      text: 'ระบบ AI พร้อมใช้งานเมื่อใส่ GEMINI_API_KEY ใน Render Dashboard',
+    };
+  }
+
+  const prompt =
+    `[คำขอคำแนะนำ Item Build & Combo Dota 2]:\n` +
+    `ฮีโร่ที่เราเล่น: ${hero}\n` +
+    (enemiesText ? `ฮีโร่ศัตรูที่ต้องรับมือ/แก้ทาง: ${enemiesText}\n` : '') +
+    (alliesText ? `ฮีโร่เพื่อนร่วมทีม/คอมโบ: ${alliesText}\n` : '') +
+    `\n[คำสั่ง]: ในฐานะยอดโค้ช Dota 2 ประจำกิลด์ SleepKnight Gaming ให้เขียนวิเคราะห์คำแนะนำการออกของและคอมโบอย่างละเอียด มีความเป็นมืออาชีพ เข้าใจง่าย สุภาพ เป็นกันเอง โดยจัดรูปแบบหัวข้อดังนี้:\n` +
+    `1. 🛡️ **ไอเทมแก้ทางเฉพาะ (Situational Counters)**: ระบุชื่อไอเทมภาษาอังกฤษและเหตุผลชัดเจนว่าทำไมต้องออกเพื่อแก้ศัตรูตัวไหน (เช่น Linken's กัน Rupture/Doom, Silver Edge ทำลาย Passive, MKB กัน Miss, Lotus Orb, Spirit Vessel ฯลฯ)\n` +
+    `2. ⚔️ **Core Item Progression**: ลำดับการออกของตั้งแต่ Early Game -> Core Mid Game -> Late Game\n` +
+    `3. 💡 **เทคนิคการเข้าไฟต์ & Positioning**: ลำดับการเล็งเป้าหมาย สกิลที่ต้องรอให้ศัตรูใช้ก่อน\n` +
+    `4. 🤝 **คอมโบสกิลและการประสานงาน (ถ้ามีเพื่อนร่วมทีม)**: สเต็ปการกดสกิลประสานงานกัน 1-2-3\n` +
+    `ตอบเป็นภาษาไทย กระชับ คมคาย และเน้นใช้งานได้จริงในการเล่น`;
+
+  try {
+    const { res } = await generateWithFallback({
+      prompt,
+      systemInstruction: SYSTEM_INSTRUCTION,
+    });
+    return {
+      hero,
+      text: res.text || 'ไม่มีคำแนะนำจากระบบ',
+    };
+  } catch (err) {
+    return {
+      hero,
+      text: `⚠️ ระบบ AI ขัดข้อง: ${err.message}`,
+    };
+  }
+}
+
 // ระบบ Autonomous AI Agent: รองรับ Function Calling + บริบทแชทย้อนหลัง + บริบทสถิติสด + บทสนทนาตอบกลับทันใจ (< 2 วินาที)
 export async function runAutonomousAgent(userInput, discordUserId, actions, chatHistory = [], extraContext = '') {
   const client = getClient();
@@ -297,6 +348,11 @@ export async function runAutonomousAgent(userInput, discordUserId, actions, chat
         } else if (name === 'inspect_match') {
           await actions.onInspectMatch(args?.match_id, args?.target_hero);
           toolActionSummary = `🔍 ดึงข้อมูลแมตช์ ${args?.match_id} ให้เรียบร้อยครับ`;
+        } else if (name === 'recommend_build') {
+          if (actions.onRecommendBuild) {
+            await actions.onRecommendBuild(args?.hero, args?.enemies, args?.allies);
+            toolActionSummary = `🛡️ แนะนำแนวทางการออกของและแก้ทางสำหรับ ${args?.hero || 'ฮีโร่'} ให้เรียบร้อยครับ`;
+          }
         }
       }
     }
