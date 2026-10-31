@@ -287,8 +287,10 @@ export async function runAutonomousAgent(userInput, discordUserId, actions, chat
           await actions.onDraftAnalysis(args?.heroes);
         } else if (name === 'get_player_stats') {
           await actions.onGetStats(args?.target);
+          toolActionSummary = `📊 ดึงข้อมูลสถิติของ ${args?.target || 'ผู้เล่น'} ให้เรียบร้อยครับ`;
         } else if (name === 'get_last_match') {
           await actions.onGetLastMatch(args?.target);
+          toolActionSummary = `⚔️ ดึงข้อมูลแมตช์ล่าสุดของ ${args?.target || 'ผู้เล่น'} ให้เรียบร้อยครับ`;
         } else if (name === 'launch_arena') {
           await actions.onLaunchArena();
         } else if (name === 'inspect_match') {

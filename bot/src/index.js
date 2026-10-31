@@ -785,8 +785,11 @@ client.on('messageCreate', async (message) => {
     lower.startsWith('bot');
 
   const matchIdMatch = raw.match(/\b(\d{10})\b/);
+  const hasIntentOrMatch =
+    Boolean(matchIdMatch) ||
+    /^(วิเคราะห์|ส่อง|เช็ค|ดูฟอร์ม|แก้ทาง)/i.test(raw);
 
-  if (isMentioned || isReply || startsWithBot || message.channel.isDMBased()) {
+  if (isMentioned || isReply || startsWithBot || hasIntentOrMatch || message.channel.isDMBased()) {
     let cleanPrompt = raw
       .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
       .replace(/^(บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท|น้องบอท)[,\s:]*/i, '')
