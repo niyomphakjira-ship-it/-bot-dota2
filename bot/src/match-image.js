@@ -53,6 +53,10 @@ export async function generateMatchBanner(matchData, highlightedHeroOrName = '')
     const nwText = p.networth ? `${(p.networth / 1000).toFixed(1)}k NW` : '';
     const csText = p.lastHits !== null ? `${p.lastHits}/${p.denies || 0} CS` : '';
     const laneText = p.lane ? p.lane.replace('_LANE', '') : '';
+    const isSupport = p.role?.includes('SUPPORT') || (p.obsPlaced > 0 && p.dewards > 0);
+    const subText = isSupport
+      ? `👁️ Obs ${p.obsPlaced || 0}/Sen ${p.senPlaced || 0} · Dewards ${p.dewards || 0}`
+      : `${laneText || ''} ${p.campsStacked ? `· Stacks ${p.campsStacked}` : ''}`.trim();
 
     return `
       <g transform="translate(${x}, ${y})">
@@ -70,7 +74,7 @@ export async function generateMatchBanner(matchData, highlightedHeroOrName = '')
           ${escapeXml((p.name || 'Anonymous').slice(0, 16))}
         </text>
         ${isMvp ? `<rect x="270" y="12" width="46" height="18" rx="4" fill="#f59e0b"/><text x="293" y="25" fill="#000" font-family="sans-serif" font-size="10" font-weight="bold" text-anchor="middle">MVP</text>` : ''}
-        ${laneText ? `<text x="150" y="40" fill="#64748b" font-family="sans-serif" font-size="11">${laneText}</text>` : ''}
+        ${subText ? `<text x="150" y="40" fill="${isSupport ? '#38bdf8' : '#64748b'}" font-family="sans-serif" font-size="10.5">${escapeXml(subText)}</text>` : ''}
 
         <!-- KDA -->
         <text x="360" y="30" fill="#f1f5f9" font-family="sans-serif" font-size="13" font-weight="bold" text-anchor="middle">

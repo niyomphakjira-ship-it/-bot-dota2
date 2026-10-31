@@ -295,6 +295,12 @@ export async function getMatchById(matchId) {
       imp: s?.imp ?? null,
       impComment: s?.impComment ?? null,
       award: s?.award ?? null,
+      role: s?.role ?? null,
+      heroHealing: s?.heroHealing ?? p.hero_healing ?? 0,
+      obsPlaced: s?.obsPlaced ?? p.obs_placed ?? 0,
+      senPlaced: s?.senPlaced ?? p.sen_placed ?? 0,
+      dewards: s?.dewards ?? (p.observer_kills || 0) + (p.sentry_kills || 0),
+      campsStacked: s?.campsStacked ?? p.camps_stacked ?? 0,
     };
   });
 
@@ -305,6 +311,8 @@ export async function getMatchById(matchId) {
     radiantScore: data.radiant_score ?? 0,
     direScore: data.dire_score ?? 0,
     players,
+    radiantVision: stratzData?.radiantVision ?? null,
+    direVision: stratzData?.direVision ?? null,
     hasStratz: Boolean(stratzData),
   };
 }

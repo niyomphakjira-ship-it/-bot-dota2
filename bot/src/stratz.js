@@ -36,9 +36,21 @@ export async function getStratzMatch(matchId) {
           goldPerMinute
           networth
           heroDamage
+          heroHealing
           kills
           deaths
           assists
+          stats {
+            campStack
+            wards {
+              type
+              time
+            }
+            wardDestruction {
+              time
+              isWard
+            }
+          }
         }
       }
     }
@@ -84,6 +96,14 @@ export async function getStratzMatch(matchId) {
         else if (p.imp <= -10) impComment = 'แจกยับ ฟอร์มตก';
       }
 
+      const obsPlaced = (p.stats?.wards || []).filter((w) => w.type === 0).length;
+      const senPlaced = (p.stats?.wards || []).filter((w) => w.type === 1).length;
+      const dewards = (p.stats?.wardDestruction || []).length;
+      const campStackArray = p.stats?.campStack;
+      const campsStacked = Array.isArray(campStackArray)
+        ? (campStackArray[campStackArray.length - 1] || 0)
+        : (campStackArray || 0);
+
       return {
         steamId: p.steamAccountId,
         heroId: p.heroId,
@@ -99,17 +119,40 @@ export async function getStratzMatch(matchId) {
         gpm: p.goldPerMinute ?? 0,
         networth: p.networth ?? 0,
         heroDamage: p.heroDamage ?? 0,
+        heroHealing: p.heroHealing ?? 0,
         kills: p.kills ?? 0,
         deaths: p.deaths ?? 0,
         assists: p.assists ?? 0,
+        obsPlaced,
+        senPlaced,
+        dewards,
+        campsStacked,
       };
     });
+
+    const radiantVision = {
+      obsPlaced: players.filter((p) => p.isRadiant).reduce((sum, p) => sum + p.obsPlaced, 0),
+      senPlaced: players.filter((p) => p.isRadiant).reduce((sum, p) => sum + p.senPlaced, 0),
+      dewards: players.filter((p) => p.isRadiant).reduce((sum, p) => sum + p.dewards, 0),
+      campsStacked: players.filter((p) => p.isRadiant).reduce((sum, p) => sum + p.campsStacked, 0),
+      healing: players.filter((p) => p.isRadiant).reduce((sum, p) => sum + p.heroHealing, 0),
+    };
+
+    const direVision = {
+      obsPlaced: players.filter((p) => !p.isRadiant).reduce((sum, p) => sum + p.obsPlaced, 0),
+      senPlaced: players.filter((p) => !p.isRadiant).reduce((sum, p) => sum + p.senPlaced, 0),
+      dewards: players.filter((p) => !p.isRadiant).reduce((sum, p) => sum + p.dewards, 0),
+      campsStacked: players.filter((p) => !p.isRadiant).reduce((sum, p) => sum + p.campsStacked, 0),
+      healing: players.filter((p) => !p.isRadiant).reduce((sum, p) => sum + p.heroHealing, 0),
+    };
 
     return {
       matchId: match.id,
       didRadiantWin: match.didRadiantWin,
       duration: `${Math.floor(match.durationSeconds / 60)}:${String(match.durationSeconds % 60).padStart(2, '0')}`,
       players,
+      radiantVision,
+      direVision,
     };
   } catch (err) {
     console.error('STRATZ GraphQL fetch error:', err.message);

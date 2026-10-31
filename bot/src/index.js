@@ -370,12 +370,20 @@ function buildMatchCardEmbed(data, targetQuery, hasBanner = false) {
       (highlightedPlayer.lastHits ? `• **CS (Creep Score):** \`${highlightedPlayer.lastHits}/${highlightedPlayer.denies}\`\n` : '') +
       (highlightedPlayer.imp !== null ? `• **STRATZ IMP:** \`${highlightedPlayer.imp > 0 ? '+' : ''}${highlightedPlayer.imp}\` (${highlightedPlayer.impComment})\n` : '');
 
+    const supportLine =
+      (highlightedPlayer.role ? `• **ตำแหน่ง (Role):** \`${highlightedPlayer.role}\`\n` : '') +
+      (highlightedPlayer.obsPlaced || highlightedPlayer.dewards || highlightedPlayer.campsStacked
+        ? `• **วิชั่น & ซัพพอร์ต:** ปัก Obs \`${highlightedPlayer.obsPlaced || 0}\` / Sen \`${highlightedPlayer.senPlaced || 0}\` · แก้หวอด \`${highlightedPlayer.dewards || 0}\` · สแต็ก \`${highlightedPlayer.campsStacked || 0}\` กอง\n`
+        : '') +
+      (highlightedPlayer.heroHealing > 0 ? `• **ฮีลเพื่อน:** \`${highlightedPlayer.heroHealing.toLocaleString()}\` HP\n` : '');
+
     highlightText =
       `\n**ผู้เล่นที่ตรวจสอบ (${highlightedPlayer.name}):**\n` +
       `• ฮีโร่: **${highlightedPlayer.hero}** (${highlightedPlayer.team})\n` +
       `• ผลการแข่งขัน: **${outcome}**\n` +
       `• KDA: \`${highlightedPlayer.kda}\` · Hero Damage: \`${(highlightedPlayer.heroDamage || 0).toLocaleString()}\`\n` +
-      stratzLine;
+      stratzLine +
+      supportLine;
   }
 
   const topDamagers = [...data.players]
@@ -388,13 +396,22 @@ function buildMatchCardEmbed(data, targetQuery, hasBanner = false) {
     )
     .join('\n');
 
+  let visionWarText = '';
+  if (data.radiantVision && data.direVision) {
+    visionWarText =
+      `\n**👁️ สงครามวิชั่น (Vision War):**\n` +
+      `• Radiant: ปัก Obs \`${data.radiantVision.obsPlaced}\` · Sen \`${data.radiantVision.senPlaced}\` · แก้ได้ \`${data.radiantVision.dewards}\` · สแต็ก \`${data.radiantVision.campsStacked}\` กอง\n` +
+      `• Dire: ปัก Obs \`${data.direVision.obsPlaced}\` · Sen \`${data.direVision.senPlaced}\` · แก้ได้ \`${data.direVision.dewards}\` · สแต็ก \`${data.direVision.campsStacked}\` กอง`;
+  }
+
   const embed = new EmbedBuilder()
     .setColor(data.radiantWin ? THEME.win : THEME.loss)
     .setTitle(`Match #${data.matchId} · ${winTeam}`)
     .setDescription(
       `${scoreText}\n` +
       `${highlightText}\n` +
-      `**Top Performers (Damage):**\n${topDamagers}`
+      `**Top Performers (Damage):**\n${topDamagers}\n` +
+      `${visionWarText}`
     )
     .setFooter({ text: data.hasStratz ? 'Powered by OpenDota + STRATZ Analytics' : 'Powered by OpenDota' });
 
@@ -554,7 +571,10 @@ client.once('ready', async () => {
         cardEmbed = buildMatchCardEmbed(matchData, match.hero, Boolean(bannerBuffer));
         const player = matchData.players?.find((p) => p.hero.toLowerCase() === match.hero.toLowerCase());
         if (player) {
-          extraStats = `\nสถิติของผู้เล่น: ฮีโร่ ${player.hero}, ผล=${player.won ? 'ชนะ' : 'แพ้'}, KDA=${player.kda}, Damage=${(player.heroDamage || 0).toLocaleString()}, NW=${(player.networth || 0).toLocaleString()}, GPM=${player.gpm || 0}, CS=${player.lastHits || 0}/${player.denies || 0}, STRATZ IMP=${player.imp !== null ? player.imp : 'N/A'}`;
+          const supDetails = (player.obsPlaced || player.dewards || player.campsStacked || player.role?.includes('SUPPORT'))
+            ? ` · Wards: ปัก Obs ${player.obsPlaced || 0} / Sen ${player.senPlaced || 0}, แก้หวอด ${player.dewards || 0}, สแต็ก ${player.campsStacked || 0} กอง, ฮีล ${(player.heroHealing || 0).toLocaleString()} HP`
+            : '';
+          extraStats = `\nสถิติของผู้เล่น: ฮีโร่ ${player.hero}, Role=${player.role || 'N/A'}, ผล=${player.won ? 'ชนะ' : 'แพ้'}, KDA=${player.kda}, Damage=${(player.heroDamage || 0).toLocaleString()}, NW=${(player.networth || 0).toLocaleString()}, GPM=${player.gpm || 0}, CS=${player.lastHits || 0}/${player.denies || 0}, STRATZ IMP=${player.imp !== null ? player.imp : 'N/A'}${supDetails}`;
         }
       } else {
         cardEmbed = buildMatchEmbed('🚨 ', match);
@@ -942,18 +962,29 @@ client.on('messageCreate', async (message) => {
 
             const playerSummaries = (matchData.players || []).map((p) => {
               const impStr = p.imp !== null ? `${p.imp > 0 ? '+' : ''}${p.imp} (${p.impComment || ''})` : 'N/A';
-              return `- [${p.team}] ${p.hero} (ผู้เล่น: ${p.name || 'นิรนาม'}): เลน=${p.lane || 'N/A'}, ผล=${p.won ? 'ชนะ' : 'แพ้'}, KDA=${p.kda}, Damage=${(p.heroDamage || 0).toLocaleString()}, Networth=${(p.networth || 0).toLocaleString()}, GPM=${p.gpm || 0}, CS=${p.lastHits || 0}/${p.denies || 0}, STRATZ IMP=${impStr}`;
+              const supStr = `Role=${p.role || 'N/A'}, Wards(Obs=${p.obsPlaced || 0}, Sen=${p.senPlaced || 0}), Dewards=${p.dewards || 0}, Stacks=${p.campsStacked || 0}, Heal=${(p.heroHealing || 0).toLocaleString()}`;
+              return `- [${p.team}] ${p.hero} (ผู้เล่น: ${p.name || 'นิรนาม'}): เลน=${p.lane || 'N/A'}, ผล=${p.won ? 'ชนะ' : 'แพ้'}, KDA=${p.kda}, Damage=${(p.heroDamage || 0).toLocaleString()}, Networth=${(p.networth || 0).toLocaleString()}, GPM=${p.gpm || 0}, CS=${p.lastHits || 0}/${p.denies || 0}, STRATZ IMP=${impStr}, ${supStr}`;
             }).join('\n');
+
+            let visionSummary = '';
+            if (matchData.radiantVision && matchData.direVision) {
+              visionSummary =
+                `[สงครามวิชั่น & การทำงานของซัพพอร์ต (Vision War)]:\n` +
+                `- Radiant: ปัก Obs ${matchData.radiantVision.obsPlaced} อัน, Sentry ${matchData.radiantVision.senPlaced} อัน, แก้หวอดศัตรูได้ ${matchData.radiantVision.dewards} อัน, สแต็กครีป ${matchData.radiantVision.campsStacked} กอง, ฮีลรวม ${matchData.radiantVision.healing.toLocaleString()} HP\n` +
+                `- Dire: ปัก Obs ${matchData.direVision.obsPlaced} อัน, Sentry ${matchData.direVision.senPlaced} อัน, แก้หวอดศัตรูได้ ${matchData.direVision.dewards} อัน, สแต็กครีป ${matchData.direVision.campsStacked} กอง, ฮีลรวม ${matchData.direVision.healing.toLocaleString()} HP\n\n`;
+            }
 
             extraContext =
               `[ข้อมูลสถิติแมตช์ #${matchData.matchId} จาก OpenDota & STRATZ Analytics]:\n` +
               `ผลการแข่งขัน: ${matchData.radiantWin ? 'Radiant ชนะ' : 'Dire ชนะ'} (ความยาวเกม ${matchData.duration})\n` +
               `สกอร์คิลรวม: Radiant ${matchData.radiantScore} - ${matchData.direScore} Dire\n\n` +
+              `${visionSummary}` +
               `สถิติผู้เล่นทุกคนในเกม:\n${playerSummaries}\n\n` +
               `[ข้อกำหนดการตอบ]:\n` +
               `- ดึงข้อมูลแมตช์ให้เรียบร้อยแล้ว ห้ามเรียก Tool inspect_match ซ้ำอีกเด็ดขาด\n` +
-              `- ตอบกลับด้วยบทวิเคราะห์เชิงลึกตามที่ผู้ใช้ถาม (เช่น ถ้าถามเลนกลาง ให้เทียบฟอร์มเลนกลางทั้ง 2 ฝั่งอย่างดุเดือด, ชี้ชัดว่าใครชนะเลน ใครแจก ใครฟาร์มไม่ทัน, ตัวเลข Networth, CS, IMP Score และการออกของ/ดาเมจ)\n` +
-              `- ตอบเป็นภาษาไทย มีลีลาเกมเมอร์ตัวตึง ปากแซ่บ จอมขยี้ คมคาย แต่เฮฮาและโดนใจ`;
+              `- ตอบกลับด้วยบทวิเคราะห์เชิงลึกตามที่ผู้ใช้ถาม\n` +
+              `- ให้ความสำคัญกับการวิเคราะห์ตำแหน่งซัพพอร์ต (Support) และสงครามวิชั่น (Vision War) ด้วยเสมอ! ห้ามดูแค่ KDA ของซัพพอร์ต ให้ดูว่าปักหวอดกี่อัน แก้หวอดกี่อัน สแต็กครีปไหม ฮีลไหม ถ้าซัพพอร์ตปัก/แก้หวอดดีให้ยกย่องเป็น MVP ปิดทองหลังพระ แต่ถ้าเล่นซัพพอร์ตแล้วไม่ปักหวอดเลย ปล่อยให้แมพมืดตื๊ดจนแครี่โดนตุ๋ย ให้แซวขยี้เรื่องตาบอด\n` +
+              `- ตอบเป็นภาษาไทย มีลีลาเกมเมอร์ตัวตึง สุภาพ มีระดับ คมคาย และเฮฮา`;
           }
         } catch (mErr) {
           console.warn('[PREFETCH MATCH ERROR]:', mErr.message);
