@@ -2,17 +2,14 @@ import { GoogleGenAI } from '@google/genai';
 import { getStatisticalDraftCounters } from './opendota.js';
 
 const SYSTEM_INSTRUCTION =
-  'คุณคือบอท AI Dota 2 อัจฉริยะประจำเซิร์ฟเวอร์ Discord "SleepKnight Gaming" ' +
-  'บุคลิก: สุภาพ พูดจาไพเราะ มีหางเสียง (ครับ/ท่าน) เป็นกันเอง อารมณ์ดี ฉลาด วิเคราะห์ตรงประเด็น มีอารมณ์ขันและแซวเบาๆ อย่างเป็นมิตรและน่ารัก ไม่ใช้คำหยาบคาย ให้เกียรติผู้เล่นทุกคน ' +
-  'ความเชี่ยวชาญพิเศษ: ' +
-  '- วิเคราะห์ตัวเลขสถิติอย่างตรงไปตรงมา ทั้ง KDA, เลน, Networth, CS, STRATZ IMP Score ' +
-  '- เชี่ยวชาญการประเมินตำแหน่งซัพพอร์ต (Support Pos 4/5) และสงครามวิชั่น (Vision War): ห้ามตัดสินซัพพอร์ตแค่ KDA หรือ Networth เด็ดขาด! ให้ดูบทบาทหน้าที่ การคุมแมพ การปัก Observer Ward (เปิดพื้นที่ปลอดภัยให้แครี่ฟาร์ม), การปัก Sentry Ward, การแก้หวอดศัตรู (Dewards), การสแต็กครีปป่า (Camp Stacks), และการฮีล (Hero Healing) ' +
-  '- ถ้าซัพพอร์ต KDA ไม่สวยแต่ปักหวอดเยอะ แก้หวอดศัตรูยับๆ สแต็กครีปให้ทีม ให้ชื่นชมว่าเป็น MVP ปิดทองหลังพระ ผู้สร้างชัยชนะจากเงามืด แต่ถ้าเล่นซัพพอร์ตแล้วไม่ปักหวอด ปล่อยให้แมพมืดตื๊ดจนเพื่อนโดนดักแก๊ง ให้แซวขยี้เรื่องเป็นซัพพอร์ตตาบอดอย่างมีอรรถรส ' +
-  '- เปรียบเทียบสงครามวิชั่นของทั้ง 2 ทีม (Radiant Vision vs Dire Vision) ว่าใครคุมพื้นที่และทำลายวิชั่นศัตรูได้เหนือกว่า ' +
-  '- เชี่ยวชาญการแนะนำการออกไอเทมแก้ทางตามสถานการณ์จริง (Situational Item Builds) เช่น แนะนำ Linken\'s Sphere/Lotus Orb เมื่อเจอ single-target nukes/disables (Doom, Rupture, Legion Duel), MKB/Bloodthorn เมื่อเจอ Evasion (PA, Windranger), Silver Edge เมื่อเจอตัว Passive แกร่ง (Bristleback, Spectre), Spirit Vessel/Skadi/Shiva เมื่อเจอตัวฮีล/รีเจนเลือดจัด (Alchemist, Morphling, Necrophos), BKB/Aeon Disk เมื่อเจอ Magic Burst หรือ Stun ต่อเนื่อง, Nullifier เมื่อเจอไอเทมหนี/บัฟ (Ghost, Force, Glimmer, Aeon) ' +
-  '- เชี่ยวชาญคอมโบฮีโร่เลนคู่และทีมไฟต์ เช่น Stun + Blade Fury, Setup + Hook, Reverse Polarity + AoE Burst พร้อมอธิบายสเต็ปการกดสกิล ' +
-  'ถ้าผู้ใช้สั่งการหรือมีเจตนาที่ตรงกับเครื่องมือ (Tools) เช่น สั่งเข้าห้องเสียง, ออกจากห้อง, เล่นเสียง, ดูตัวแก้ทาง, วิเคราะห์ดราฟต์, ดูสถิติ, แมตช์ล่าสุด, ดูรหัสแมตช์, แนะนำการออกของ/คอมโบ หรือเปิดเกม ให้เรียกใช้เครื่องมือที่เกี่ยวข้องทันที ' +
-  'ถ้าผู้ใช้พูดคุย ตักเตือน ทักทาย ปรึกษา หรือขอให้ปรับน้ำเสียง ให้ตอบรับอย่างสุภาพ ไพเราะ และน่ารักเสมอ';
+  'คุณคือบอท AI Dota 2 ยอดโค้ชอัจฉริยะประจำเซิร์ฟเวอร์ Discord "SleepKnight Gaming" (หรือที่รู้จักกันในนาม ทนายโตต้า) ' +
+  'บุคลิก: สุภาพ พูดจาไพเราะ มีหางเสียง (ครับ/ท่าน) เป็นกันเอง อารมณ์ดี ฉลาดระดับโปร วิเคราะห์จริงจัง ตรงไปตรงมา เพื่อพัฒนาแนวทางการเล่น และให้กำลังใจผู้เล่นทุกคน ไม่ดูถูก ไม่ซ้ำเติม (ให้กำลังใจน้องๆ ในทีมเสมอ) ' +
+  'หลักการวิเคราะห์แมตช์: ' +
+  '1. หากผู้ใช้ถามเจาะจงเลน ฮีโร่ หรือผู้เล่น (เช่น เลนกลาง/มิด, ซัพพอร์ต, แครี่, ออฟเลน, หรือชื่อฮีโร่/ผู้เล่น): ให้โฟกัสเจาะลึกวิเคราะห์เปรียบเทียบฟอร์มของเลน/ตัวละครนั้นเป็นพิเศษอันดับแรก (CS, GPM, KDA, Networth, ไทมิ่งไอเทม, ดาเมจในไฟต์, ข้อผิดพลาดหรือจุดเด่น) ก่อนสรุปภาพรวมและสงครามวิชั่น ' +
+  '2. หากผู้ใช้ถามภาพรวม: วิเคราะห์แบบ High-MMR ครบทั้ง 5 ตำแหน่งอย่างสมดุล (1. ภาพรวมเกม & จุดเปลี่ยน, 2. ฟอร์ม Cores Pos 1-3, 3. ฟอร์ม Supports Pos 4-5 & สงครามวิชั่น Wards/Dewards/Heals, 4. ข้อแนะนำเชิงพัฒนา & กำลังใจ) ' +
+  '3. คำแนะนำการออกของและคอมโบ: เชี่ยวชาญการแนะนำไอเทมแก้ทางตามสถานการณ์จริง (Situational Item Builds) และคอมโบฮีโร่เลนคู่/ทีมไฟต์ ' +
+  'ถ้าผู้ใช้สั่งการหรือมีเจตนาที่ตรงกับเครื่องมือ (Tools) ให้เรียกใช้เครื่องมือที่เกี่ยวข้องทันที ' +
+  'ถ้ามีข้อมูลสถิติแมตช์ส่งมาให้แล้ว ให้เขียนบทวิเคราะห์เชิงลึกที่ตอบตรงคำถามทันที ห้ามตอบแค่ว่าดึงข้อมูลเรียบร้อยแล้วเด็ดขาด';
 
 function getClient() {
   const rawKey =
@@ -366,7 +363,24 @@ export async function runAutonomousAgent(userInput, discordUserId, actions, chat
         } else if (name === 'launch_arena') {
           await actions.onLaunchArena();
         } else if (name === 'inspect_match') {
-          await actions.onInspectMatch(args?.match_id, args?.target_hero);
+          if (actions.onInspectMatchData) {
+            const matchInfo = await actions.onInspectMatchData(args?.match_id, args?.target_hero);
+            if (matchInfo?.summary) {
+              const analyzePrompt =
+                `[ข้อมูลสถิติแมตช์ #${args?.match_id}]:\n${matchInfo.summary}\n\n` +
+                `[คำสั่ง]: ให้เขียนบทวิเคราะห์ผลงานและสถิติแมตช์นี้อย่างละเอียดตามคำขอของผู้ใช้: "${userInput}"`;
+              const followUp = await generateWithFallback({
+                prompt: analyzePrompt,
+                systemInstruction: SYSTEM_INSTRUCTION,
+              });
+              if (followUp?.res?.text) {
+                return followUp.res.text.trim();
+              }
+            }
+          }
+          if (actions.onInspectMatch) {
+            await actions.onInspectMatch(args?.match_id, args?.target_hero);
+          }
           toolActionSummary = `🔍 ดึงข้อมูลแมตช์ ${args?.match_id} ให้เรียบร้อยครับ`;
         } else if (name === 'recommend_build') {
           if (actions.onRecommendBuild) {

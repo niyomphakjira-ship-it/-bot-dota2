@@ -422,6 +422,19 @@ function buildMatchCardEmbed(data, targetQuery, hasBanner = false) {
   return embed;
 }
 
+async function fetchMatchWithRetry(matchId, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const data = await getMatchById(matchId);
+      if (data) return data;
+    } catch (err) {
+      if (i === retries) throw err;
+      await new Promise((r) => setTimeout(r, 800));
+    }
+  }
+  return null;
+}
+
 async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
   const cleanId = String(matchId || '').match(/\d{8,12}/)?.[0];
   if (!cleanId) return;
@@ -596,7 +609,7 @@ client.once('ready', async () => {
           `KDA: ${match.kills}/${match.deaths}/${match.assists}\n` +
           `GPM: ${match.gpm}, XPM: ${match.xpm}, ดาเมจ: ${match.heroDamage}\n` +
           `${extraStats}\n\n` +
-          `[คำสั่ง]: ในฐานะบอท Dota 2 ปากแซ่บ จอมขยี้ตัวตึงประจำกิลด์ SleepKnight Gaming ให้เขียนข้อความแท็กแซว/ขยี้หรืออวยผู้เล่นคนนี้สั้นๆ 2-3 ประโยคเป็นภาษาไทยแบบเกมเมอร์ตัวจริง คมคาย กวนๆ เฮฮา (ไม่ต้องยาวเกินไป)`;
+          `[คำสั่ง]: ในฐานะโค้ช AI Dota 2 อัจฉริยะประจำกิลด์ SleepKnight Gaming ให้เขียนข้อความสรุปผลงาน 2-3 ประโยคเป็นภาษาไทยแบบมืออาชีพ สุภาพ เป็นกันเอง ชี้จุดเด่น/สิ่งที่ควรปรับเพื่อพัฒนาการเล่น และให้กำลังใจผู้เล่นคนนี้อย่างอบอุ่น (ไม่ต้องยาวเกินไป)`;
 
         const res = await askDotaCoach(aiPrompt, isDiscordUser ? discordUserId : 'general');
         if (res?.text && !res.text.includes('ระบบ AI')) {
@@ -896,8 +909,8 @@ client.on('messageCreate', async (message) => {
 
   if (isMentioned || isReply || startsWithBot || hasIntentOrMatch || message.channel.isDMBased()) {
     let cleanPrompt = raw
-      .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
-      .replace(/^(บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท|น้องบอท)[,\s:]*/i, '')
+      .replace(/<@!?&?\d+>/g, '')
+      .replace(/^(นายโตต้า|ทนายโตต้า|โตต้า|บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท|น้องบอท)[,\s:]*/i, '')
       .trim();
 
     if (!cleanPrompt) cleanPrompt = 'สวัสดี';
@@ -915,6 +928,10 @@ client.on('messageCreate', async (message) => {
 
     try {
       await message.channel.sendTyping().catch(() => {});
+      let extraContext = '';
+      let matchCardEmbed = null;
+      let bannerFile = null;
+
       const actions = {
         onJoinVoice: async () => handleJoinVoice(message.member?.voice?.channel, replyTarget),
         onLeaveVoice: async () => handleLeaveVoice(message.guildId, replyTarget),
@@ -941,18 +958,51 @@ client.on('messageCreate', async (message) => {
         },
         onGetStats: async (target) => handleStatCommand(message.author.id, target || '', replyTarget),
         onGetLastMatch: async (target) => handleLastMatchCommand(message.author.id, target || '', replyTarget),
-        onInspectMatch: async (mId, hero) => handleInspectMatchCommand(mId, hero, replyTarget),
+        onInspectMatch: async (mId, hero) => {
+          if (!matchCardEmbed) {
+            return handleInspectMatchCommand(mId, hero, replyTarget);
+          }
+        },
+        onInspectMatchData: async (mId, hero) => {
+          try {
+            const data = await fetchMatchWithRetry(mId);
+            if (!data) return null;
+            if (!bannerFile) {
+              const bannerBuffer = await generateMatchBanner(data, hero || cleanPrompt).catch(() => null);
+              if (bannerBuffer) {
+                bannerFile = new AttachmentBuilder(bannerBuffer, { name: 'match-banner.png' });
+              }
+            }
+            if (!matchCardEmbed) {
+              matchCardEmbed = buildMatchCardEmbed(data, hero || cleanPrompt, Boolean(bannerFile));
+            }
+            const pSummary = (data.players || []).map((p) => {
+              const impStr = p.imp !== null ? `${p.imp > 0 ? '+' : ''}${p.imp} (${p.impComment || ''})` : 'N/A';
+              const supStr = `Role=${p.role || 'N/A'}, Wards(Obs=${p.obsPlaced || 0}, Sen=${p.senPlaced || 0}), Dewards=${p.dewards || 0}, Stacks=${p.campsStacked || 0}, Heal=${(p.heroHealing || 0).toLocaleString()}`;
+              return `- [${p.team}] ${p.hero} (ผู้เล่น: ${p.name || 'นิรนาม'}): เลน=${p.lane || 'N/A'}, ผล=${p.won ? 'ชนะ' : 'แพ้'}, KDA=${p.kda}, Damage=${(p.heroDamage || 0).toLocaleString()}, Networth=${(p.networth || 0).toLocaleString()}, GPM=${p.gpm || 0}, CS=${p.lastHits || 0}/${p.denies || 0}, STRATZ IMP=${impStr}, ${supStr}`;
+            }).join('\n');
+            let vSummary = '';
+            if (data.radiantVision && data.direVision) {
+              vSummary =
+                `[สงครามวิชั่น & การทำงานของซัพพอร์ต (Vision War)]:\n` +
+                `- Radiant: ปัก Obs ${data.radiantVision.obsPlaced} อัน, Sentry ${data.radiantVision.senPlaced} อัน, แก้หวอดศัตรูได้ ${data.radiantVision.dewards} อัน, สแต็กครีป ${data.radiantVision.campsStacked} กอง, ฮีลรวม ${data.radiantVision.healing.toLocaleString()} HP\n` +
+                `- Dire: ปัก Obs ${data.direVision.obsPlaced} อัน, Sentry ${data.direVision.senPlaced} อัน, แก้หวอดศัตรูได้ ${data.direVision.dewards} อัน, สแต็กครีป ${data.direVision.campsStacked} กอง, ฮีลรวม ${data.direVision.healing.toLocaleString()} HP\n\n`;
+            }
+            return {
+              data,
+              summary: `ผลการแข่งขัน: ${data.radiantWin ? 'Radiant ชนะ' : 'Dire ชนะ'} (${data.duration}), Score: Radiant ${data.radiantScore} - ${data.direScore} Dire\n${vSummary}สถิติผู้เล่น:\n${pSummary}`,
+            };
+          } catch {
+            return null;
+          }
+        },
         onLaunchArena: async () => handleActivityInvite(message.member?.voice?.channel, replyTarget),
       };
 
       // ถ้าในข้อความมีรหัสแมตช์ 10 หลักชัดเจน ให้ดึงสถิติ OpenDota + STRATZ มารอไว้ล่วงหน้า
-      let extraContext = '';
-      let matchCardEmbed = null;
-      let bannerFile = null;
-
       if (matchIdMatch && !raw.startsWith('!match') && !raw.startsWith('/match')) {
         try {
-          const matchData = await getMatchById(matchIdMatch[1]);
+          const matchData = await fetchMatchWithRetry(matchIdMatch[1]);
           if (matchData) {
             const bannerBuffer = await generateMatchBanner(matchData, raw).catch(() => null);
             if (bannerBuffer) {
@@ -980,11 +1030,12 @@ client.on('messageCreate', async (message) => {
               `สกอร์คิลรวม: Radiant ${matchData.radiantScore} - ${matchData.direScore} Dire\n\n` +
               `${visionSummary}` +
               `สถิติผู้เล่นทุกคนในเกม:\n${playerSummaries}\n\n` +
-              `[ข้อกำหนดการตอบ]:\n` +
-              `- ดึงข้อมูลแมตช์ให้เรียบร้อยแล้ว ห้ามเรียก Tool inspect_match ซ้ำอีกเด็ดขาด\n` +
-              `- ตอบกลับด้วยบทวิเคราะห์เชิงลึกตามที่ผู้ใช้ถาม\n` +
-              `- ให้ความสำคัญกับการวิเคราะห์ตำแหน่งซัพพอร์ต (Support) และสงครามวิชั่น (Vision War) ด้วยเสมอ! ห้ามดูแค่ KDA ของซัพพอร์ต ให้ดูว่าปักหวอดกี่อัน แก้หวอดกี่อัน สแต็กครีปไหม ฮีลไหม ถ้าซัพพอร์ตปัก/แก้หวอดดีให้ยกย่องเป็น MVP ปิดทองหลังพระ แต่ถ้าเล่นซัพพอร์ตแล้วไม่ปักหวอดเลย ปล่อยให้แมพมืดตื๊ดจนแครี่โดนตุ๋ย ให้แซวขยี้เรื่องตาบอด\n` +
-              `- ตอบเป็นภาษาไทย มีลีลาเกมเมอร์ตัวตึง สุภาพ มีระดับ คมคาย และเฮฮา`;
+              `[แนวทางการวิเคราะห์ของ AI Coach]:\n` +
+              `- ดึงข้อมูลแมตช์ให้เรียบร้อยแล้ว ห้ามเรียก Tool inspect_match ซ้ำอีกเด็ดขาด ให้เขียนบทวิเคราะห์เชิงลึกทันที\n` +
+              `- หากผู้ใช้ระบุเจาะจงเลน ฮีโร่ หรือผู้เล่น (เช่น เลนกลาง/มิด, ซัพพอร์ต, แครี่, ออฟเลน, หรือชื่อฮีโร่/ผู้เล่น): ให้โฟกัสเจาะลึกวิเคราะห์เปรียบเทียบฟอร์มของเลน/ตัวละครนั้นเป็นพิเศษอันดับแรก (CS, GPM, KDA, Networth, ไทมิ่งไอเทม, ดาเมจในไฟต์, ข้อผิดพลาดหรือจุดเด่น) ก่อนสรุปภาพรวมและสงครามวิชั่น\n` +
+              `- หากผู้ใช้ถามภาพรวมแมตช์ (ไม่ได้เจาะจงเลน): ให้วิเคราะห์ครบทั้ง 5 ตำแหน่งอย่างสมดุล (1. Overview -> 2. ฟอร์ม Cores Pos 1-3 -> 3. ฟอร์ม Supports Pos 4-5 & Vision War -> 4. ข้อแนะนำเชิงพัฒนา)\n` +
+              `- น้ำเสียง: สุภาพ ไพเราะ ให้เกียรติ เป็นกันเอง ให้กำลังใจเพื่อนร่วมทีมอย่างอบอุ่น (อย่าว่าน้องเยอะ ชี้จุดที่ควรปรับอย่างสุภาพและให้กำลังใจ) ไม่ดูถูกหรือซ้ำเติม\n` +
+              `- ตอบเป็นภาษาไทย มีระดับ คมคาย และเป็นประโยชน์ต่อการพัฒนาการเล่นจริง`;
           }
         } catch (mErr) {
           console.warn('[PREFETCH MATCH ERROR]:', mErr.message);
