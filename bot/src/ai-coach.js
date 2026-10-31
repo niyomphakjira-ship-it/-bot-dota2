@@ -84,6 +84,18 @@ export const AGENT_TOOLS = [
     },
   },
   {
+    name: 'link_player',
+    description: 'ผูกไอดี Dota 2 Friend ID หรือ Steam ID ให้กับตนเองหรือเพื่อนใน Discord',
+    parameters: {
+      type: 'object',
+      properties: {
+        account_id: { type: 'string', description: 'เลข Friend ID หรือ Steam ID เช่น 829655620' },
+        target: { type: 'string', description: 'แท็กหรือไอดีของเพื่อน เช่น <@234952562145492993> (ถ้าไม่ระบุหมายถึงผูกให้คนสั่ง)' },
+      },
+      required: ['account_id'],
+    },
+  },
+  {
     name: 'get_player_stats',
     description: 'เช็คสถิติโปรไฟล์ Rank และ Winrate ของผู้ใช้หรือเพื่อน',
     parameters: {
@@ -337,6 +349,11 @@ export async function runAutonomousAgent(userInput, discordUserId, actions, chat
           await actions.onCounterHero(args?.hero);
         } else if (name === 'draft_analysis') {
           await actions.onDraftAnalysis(args?.heroes);
+        } else if (name === 'link_player') {
+          if (actions.onLinkPlayer) {
+            await actions.onLinkPlayer(args?.account_id, args?.target);
+            toolActionSummary = `🔗 ผูกไอดี Dota 2 (${args?.account_id}) เรียบร้อยครับ`;
+          }
         } else if (name === 'get_player_stats') {
           await actions.onGetStats(args?.target);
           toolActionSummary = `📊 ดึงข้อมูลสถิติของ ${args?.target || 'ผู้เล่น'} ให้เรียบร้อยครับ`;

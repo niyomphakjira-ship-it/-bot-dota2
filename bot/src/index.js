@@ -912,6 +912,13 @@ client.on('messageCreate', async (message) => {
         onCounterHero: async (hero) => handleCounterCommand(hero, replyTarget),
         onDraftAnalysis: async (heroes) => handleDraftCommand(heroes, message.author.id, replyTarget),
         onRecommendBuild: async (hero, enemies, allies) => handleBuildCommand(hero, enemies, allies, replyTarget),
+        onLinkPlayer: async (accId, target) => {
+          const targetMention = target ? String(target).match(/\d{17,20}/)?.[0] : null;
+          const targetUser = targetMention
+            ? (client.users.cache.get(targetMention) || { id: targetMention, username: `<@${targetMention}>` })
+            : message.author;
+          return handleLinkCommand(message.author, accId, replyTarget, targetUser);
+        },
         onGetStats: async (target) => handleStatCommand(message.author.id, target || '', replyTarget),
         onGetLastMatch: async (target) => handleLastMatchCommand(message.author.id, target || '', replyTarget),
         onInspectMatch: async (mId, hero) => handleInspectMatchCommand(mId, hero, replyTarget),

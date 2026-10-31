@@ -12,7 +12,7 @@ const STEAM64_BASE = 76561197960265728n;
 export const DEFAULT_SEEDED_PLAYERS = {
   '647785506121449473': { accountId: '947857860', discordTag: 'tee2147' },
   '1319873624856985733': { accountId: '1204317380', discordTag: 'SleepfrozeN' },
-  'player_829655620': { accountId: '829655620', discordTag: 'JimheeTSMA618' },
+  '234952562145492993': { accountId: '829655620', discordTag: 'JimheeTSMA618' },
 };
 
 export const DEFAULT_WATCH_CHANNELS = {
