@@ -520,11 +520,15 @@ client.once('ready', async () => {
       }
 
       // 2. Generate a savage AI roast from Gemini
-      let roastText = `🚨 **จบแมตช์ใหม่สดๆ ร้อนๆ!** <@${discordUserId}> เพิ่งเล่น **${match.hero}** จบในแมตช์ \`#${match.matchId}\` (${match.won ? '🏆 ชนะ' : '💀 แพ้'})!`;
+      const isDiscordUser = /^\d{17,20}$/.test(String(discordUserId));
+      const playerName = matchData?.players?.find((p) => p.hero.toLowerCase() === match.hero.toLowerCase())?.name || 'เพื่อนในตี้';
+      const playerTag = isDiscordUser ? `<@${discordUserId}>` : `**${playerName}**`;
+
+      let roastText = `🚨 **จบแมตช์ใหม่สดๆ ร้อนๆ!** ${playerTag} เพิ่งเล่น **${match.hero}** จบในแมตช์ \`#${match.matchId}\` (${match.won ? '🏆 ชนะ' : '💀 แพ้'})!`;
 
       try {
         const aiPrompt =
-          `[เหตุการณ์]: ผู้เล่น Discord ID <@${discordUserId}> เพิ่งเล่นแมตช์ Dota 2 จบสดๆ ร้อนๆ!\n` +
+          `[เหตุการณ์]: ผู้เล่น ${playerTag} เพิ่งเล่นแมตช์ Dota 2 จบสดๆ ร้อนๆ!\n` +
           `แมตช์ #${match.matchId}\n` +
           `ฮีโร่: ${match.hero}\n` +
           `ผลการแข่งขัน: ${match.won ? 'ชนะ (Victory)' : 'แพ้ (Defeat)'}\n` +
@@ -533,9 +537,9 @@ client.once('ready', async () => {
           `${extraStats}\n\n` +
           `[คำสั่ง]: ในฐานะบอท Dota 2 ปากแซ่บ จอมขยี้ตัวตึงประจำกิลด์ SleepKnight Gaming ให้เขียนข้อความแท็กแซว/ขยี้หรืออวยผู้เล่นคนนี้สั้นๆ 2-3 ประโยคเป็นภาษาไทยแบบเกมเมอร์ตัวจริง คมคาย กวนๆ เฮฮา (ไม่ต้องยาวเกินไป)`;
 
-        const res = await askDotaCoach(aiPrompt, discordUserId);
+        const res = await askDotaCoach(aiPrompt, isDiscordUser ? discordUserId : 'general');
         if (res?.text && !res.text.includes('ระบบ AI')) {
-          roastText = `🚨 <@${discordUserId}>\n${res.text}`;
+          roastText = `🚨 ${playerTag}\n${res.text}`;
         }
       } catch (_aiErr) {}
 
