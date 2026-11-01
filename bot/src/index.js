@@ -1160,7 +1160,8 @@ client.on('messageCreate', async (message) => {
             const pSummary = (data.players || []).map((p) => {
               const impStr = p.imp !== null ? `${p.imp > 0 ? '+' : ''}${p.imp} (${p.impComment || ''})` : 'N/A';
               const supStr = `Role=${p.role || 'N/A'}, Wards(Obs=${p.obsPlaced || 0}, Sen=${p.senPlaced || 0}), Dewards=${p.dewards || 0}, Stacks=${p.campsStacked || 0}, Heal=${(p.heroHealing || 0).toLocaleString()}`;
-              return `- [${p.team}] ${p.hero} (ผู้เล่น: ${p.name || 'นิรนาม'}): เลน=${p.lane || 'N/A'}, ผล=${p.won ? 'ชนะ' : 'แพ้'}, KDA=${p.kda}, Damage=${(p.heroDamage || 0).toLocaleString()}, Networth=${(p.networth || 0).toLocaleString()}, GPM=${p.gpm || 0}, CS=${p.lastHits || 0}/${p.denies || 0}, STRATZ IMP=${impStr}, ${supStr}`;
+              const effStr = `DER=${p.der ?? '1.0'} (Dmg ${p.dmgShare ?? 0}% / NW ${p.nwShare ?? 0}%), KP=${p.kp ?? 0}%, สถานะ=[${p.archetype || 'มาตรฐาน'}]`;
+              return `- [${p.team}] ${p.hero} (ผู้เล่น: ${p.name || 'นิรนาม'}): เลน=${p.lane || 'N/A'}, ผล=${p.won ? 'ชนะ' : 'แพ้'}, KDA=${p.kda}, Damage=${(p.heroDamage || 0).toLocaleString()}, Networth=${(p.networth || 0).toLocaleString()}, GPM=${p.gpm || 0}, CS=${p.lastHits || 0}/${p.denies || 0}, STRATZ IMP=${impStr}, ${effStr}, ${supStr}`;
             }).join('\n');
             let vSummary = '';
             if (data.radiantVision && data.direVision) {
@@ -1194,7 +1195,8 @@ client.on('messageCreate', async (message) => {
             const playerSummaries = (matchData.players || []).map((p) => {
               const impStr = p.imp !== null ? `${p.imp > 0 ? '+' : ''}${p.imp} (${p.impComment || ''})` : 'N/A';
               const supStr = `Role=${p.role || 'N/A'}, Wards(Obs=${p.obsPlaced || 0}, Sen=${p.senPlaced || 0}), Dewards=${p.dewards || 0}, Stacks=${p.campsStacked || 0}, Heal=${(p.heroHealing || 0).toLocaleString()}`;
-              return `- [${p.team}] ${p.hero} (ผู้เล่น: ${p.name || 'นิรนาม'}): เลน=${p.lane || 'N/A'}, ผล=${p.won ? 'ชนะ' : 'แพ้'}, KDA=${p.kda}, Damage=${(p.heroDamage || 0).toLocaleString()}, Networth=${(p.networth || 0).toLocaleString()}, GPM=${p.gpm || 0}, CS=${p.lastHits || 0}/${p.denies || 0}, STRATZ IMP=${impStr}, ${supStr}`;
+              const effStr = `DER=${p.der ?? '1.0'} (Dmg ${p.dmgShare ?? 0}% / NW ${p.nwShare ?? 0}%), KP=${p.kp ?? 0}%, สถานะ=[${p.archetype || 'มาตรฐาน'}]`;
+              return `- [${p.team}] ${p.hero} (ผู้เล่น: ${p.name || 'นิรนาม'}): เลน=${p.lane || 'N/A'}, ผล=${p.won ? 'ชนะ' : 'แพ้'}, KDA=${p.kda}, Damage=${(p.heroDamage || 0).toLocaleString()}, Networth=${(p.networth || 0).toLocaleString()}, GPM=${p.gpm || 0}, CS=${p.lastHits || 0}/${p.denies || 0}, STRATZ IMP=${impStr}, ${effStr}, ${supStr}`;
             }).join('\n');
 
             let visionSummary = '';
@@ -1210,13 +1212,14 @@ client.on('messageCreate', async (message) => {
               `ผลการแข่งขัน: ${matchData.radiantWin ? 'Radiant ชนะ' : 'Dire ชนะ'} (ความยาวเกม ${matchData.duration})\n` +
               `สกอร์คิลรวม: Radiant ${matchData.radiantScore} - ${matchData.direScore} Dire\n\n` +
               `${visionSummary}` +
-              `สถิติผู้เล่นทุกคนในเกม:\n${playerSummaries}\n\n` +
-              `[แนวทางการวิเคราะห์ของ AI Coach]:\n` +
+              `สถิติผู้เล่นทุกคนในเกม (พร้อมดัชนี DER, KP% และ Archetype):\n${playerSummaries}\n\n` +
+              `[แนวทางการวิเคราะห์ของ AI Coach - ทนายโตต้า]:\n` +
               `- ดึงข้อมูลแมตช์ให้เรียบร้อยแล้ว ห้ามเรียก Tool inspect_match ซ้ำอีกเด็ดขาด ให้เขียนบทวิเคราะห์เชิงลึกทันที\n` +
-              `- หากผู้ใช้ระบุเจาะจงเลน ฮีโร่ หรือผู้เล่น (เช่น เลนกลาง/มิด, ซัพพอร์ต, แครี่, ออฟเลน, หรือชื่อฮีโร่/ผู้เล่น): ให้โฟกัสเจาะลึกวิเคราะห์เปรียบเทียบฟอร์มของเลน/ตัวละครนั้นเป็นพิเศษอันดับแรก (CS, GPM, KDA, Networth, ไทมิ่งไอเทม, ดาเมจในไฟต์, ข้อผิดพลาดหรือจุดเด่น) ก่อนสรุปภาพรวมและสงครามวิชั่น\n` +
-              `- หากผู้ใช้ถามภาพรวมแมตช์ (ไม่ได้เจาะจงเลน): ให้วิเคราะห์ครบทั้ง 5 ตำแหน่งอย่างสมดุล (1. Overview -> 2. ฟอร์ม Cores Pos 1-3 -> 3. ฟอร์ม Supports Pos 4-5 & Vision War -> 4. ข้อแนะนำเชิงพัฒนา)\n` +
-              `- น้ำเสียง: สุภาพ ไพเราะ ให้เกียรติ เป็นกันเอง ให้กำลังใจเพื่อนร่วมทีมอย่างอบอุ่น (อย่าว่าน้องเยอะ ชี้จุดที่ควรปรับอย่างสุภาพและให้กำลังใจ) ไม่ดูถูกหรือซ้ำเติม\n` +
-              `- ตอบเป็นภาษาไทย มีระดับ คมคาย และเป็นประโยชน์ต่อการพัฒนาการเล่นจริง`;
+              `- ตัดสินด้วยเนื้องานจริง ไม่หลงระเริงกับคำว่าชนะ: ตรวจสอบสถานะฟอร์มของผู้เล่นตาม DER, KP%, IMP (ใครคือ True Carry, ใครคือ Carried Passenger โดนเพื่อนแบกหลังหัก, ใครคือ Unlucky Ace แพ้แต่เล่นระดับพระเจ้า, หรือใครที่แจกยับ Rough Game)\n` +
+              `- หากผู้ใช้ระบุเจาะจงเลน ฮีโร่ หรือผู้เล่น: ให้โฟกัสเจาะลึกวิเคราะห์เปรียบเทียบฟอร์มของเลน/ตัวละครนั้นเป็นพิเศษอันดับแรก (CS, GPM, KDA, Networth, ไทมิ่งไอเทม, ดาเมจในไฟต์, ข้อผิดพลาดหรือจุดเด่น)\n` +
+              `- 🔥 กติกาโหมดปากแซ่บสับแหลก (Savage Roast Mode): หากผู้เล่นที่ถามถึงหรือผู้เล่นในเกมเล่นแย่ ต่ำกว่ามาตรฐาน โดนเพื่อนแบกหลังหัก หรือแจกฟรี ให้สับแหลกทันทีด้วยวาจา "ปากแซ่บ" จิกกัดแสบๆ คันๆ ตลกร้าย คมกริบ และกวนประสาทอย่างมีชั้นเชิง อิงตัวเลขสถิติจริง (เช่น ฟาร์มเยอะแต่ดาเมจเท่านกสะกิด, BKB ตั้งโชว์, เดินแจกในป่ามืด) แต่ตบท้ายด้วยการชี้ทางสว่างและการบ้าน 1-2 ข้ออย่างโค้ชมืออาชีพ\n` +
+              `- หากผู้เล่นเล่นดี เล่นแบก หรือเป็น Unlucky Ace ให้ยกย่องให้เกียรติอย่างสมเกียรติ\n` +
+              `- ตอบเป็นภาษาไทย มีระดับ คมคาย และเน้นพัฒนาผู้เล่นจริง`;
           }
         } catch (mErr) {
           console.warn('[PREFETCH MATCH ERROR]:', mErr.message);

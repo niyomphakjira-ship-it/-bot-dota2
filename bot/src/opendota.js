@@ -386,7 +386,9 @@ export async function getPlayerRecentPerformance(accountId, limit = 20) {
   else if (winrate >= 55 || (winrate >= 50 && kdaRatio >= 3.0))
     overallGrade = 'GRADE A (ตัวตึงประจำทีม)';
   else if (winrate >= 45) overallGrade = 'GRADE B (มาตรฐานแน่น)';
-  else overallGrade = 'GRADE C (ช่วงเก็บเลเวล / กำลังพัฒนา)';
+  else overallGrade = 'GRADE C (ช่วงเก็บเลเวล / ฟอร์มวิกฤต)';
+
+  const isSpicyEligible = overallGrade.includes('GRADE C') || winrate < 45 || avgDeaths >= 8.0;
 
   return {
     accountId,
@@ -410,6 +412,7 @@ export async function getPlayerRecentPerformance(accountId, limit = 20) {
     signatureHeroes,
     trapHeroes,
     laneCounts,
+    isSpicyEligible,
     grades: {
       overall: overallGrade,
       economy: ecoGrade,
@@ -465,27 +468,82 @@ export async function getMatchById(matchId) {
   const mins = Math.floor(data.duration / 60);
   const secs = String(data.duration % 60).padStart(2, '0');
 
-  const players = (data.players || []).map((p) => {
+  const rawPlayers = data.players || [];
+  let radDmg = 0, radNw = 0, radKills = 0;
+  let direDmg = 0, direNw = 0, direKills = 0;
+
+  for (const p of rawPlayers) {
+    const isRadiant = p.player_slot < 128;
+    const dmg = p.hero_damage || 0;
+    const nw = p.net_worth || 0;
+    const k = p.kills || 0;
+    if (isRadiant) {
+      radDmg += dmg;
+      radNw += nw;
+      radKills += k;
+    } else {
+      direDmg += dmg;
+      direNw += nw;
+      direKills += k;
+    }
+  }
+
+  const players = rawPlayers.map((p) => {
     const isRadiant = p.player_slot < 128;
     const won = (isRadiant && data.radiant_win) || (!isRadiant && !data.radiant_win);
 
     const s = stratzData?.players?.find((sp) => sp.heroId === p.hero_id);
 
+    const teamDmg = isRadiant ? radDmg : direDmg;
+    const teamNw = isRadiant ? radNw : direNw;
+    const teamKills = isRadiant ? radKills : direKills;
+
+    const dmg = p.hero_damage || 0;
+    const nw = s?.networth ?? p.net_worth ?? 0;
+    const k = p.kills ?? 0;
+    const d = p.deaths ?? 0;
+    const a = p.assists ?? 0;
+
+    const dmgShare = teamDmg > 0 ? Number(((dmg / teamDmg) * 100).toFixed(1)) : 0;
+    const nwShare = teamNw > 0 ? Number(((nw / teamNw) * 100).toFixed(1)) : 0;
+    const der = nwShare > 0 ? Number((dmgShare / nwShare).toFixed(2)) : 1.0;
+    const kp = teamKills > 0 ? Number((((k + a) / teamKills) * 100).toFixed(1)) : 0;
+
+    const impVal = s?.imp ?? 0;
+    const isSupport = s?.role === 'Support' || s?.role === 'HardSupport' || (p.obs_placed || 0) + (p.sen_placed || 0) >= 8;
+
+    let archetype = '🛡️ Solid (ฟอร์มมาตรฐาน)';
+    if (won) {
+      if ((der >= 1.25 && kp >= 50) || impVal >= 20) {
+        archetype = '👑 True Carry / MVP (แบกทีมตัวจริง)';
+      } else if (!isSupport && (der <= 0.65 || (kp < 35 && d >= 6) || (d >= 8 && k <= 3))) {
+        archetype = '🎒 Carried Passenger (ชนะเพราะโดนเพื่อนแบกหลังหัก)';
+      } else if (impVal <= -15) {
+        archetype = '🎒 Carried / Low Impact (ชนะแต่ฟอร์มส่วนตัวหลุด)';
+      }
+    } else {
+      if (impVal >= 15 || der >= 1.25 || (isSupport && (p.sen_placed || 0) >= 12)) {
+        archetype = '💔 Unlucky Ace (แพ้แต่เล่นระดับพระเจ้า / แบกสุดตัว)';
+      } else if (impVal <= -15 || der <= 0.6 || d >= 9) {
+        archetype = '⚠️ Rough Game / แจกยับ (ฟอร์มหลุด / จุดอ่อนของทีม)';
+      }
+    }
+
     return {
       name: p.personaname || `Player (Slot ${p.player_slot})`,
       heroId: p.hero_id,
       hero: getHeroName(p.hero_id),
-      kills: p.kills ?? 0,
-      deaths: p.deaths ?? 0,
-      assists: p.assists ?? 0,
-      kda: `${p.kills ?? 0}/${p.deaths ?? 0}/${p.assists ?? 0}`,
-      heroDamage: p.hero_damage || 0,
+      kills: k,
+      deaths: d,
+      assists: a,
+      kda: `${k}/${d}/${a}`,
+      heroDamage: dmg,
       won,
       isRadiant,
       team: isRadiant ? 'Radiant' : 'Dire',
       lane: s?.lane ?? null,
       gpm: s?.gpm ?? p.gold_per_min ?? null,
-      networth: s?.networth ?? p.net_worth ?? null,
+      networth: nw,
       lastHits: s?.lastHits ?? p.last_hits ?? null,
       denies: s?.denies ?? p.denies ?? null,
       imp: s?.imp ?? null,
@@ -497,6 +555,11 @@ export async function getMatchById(matchId) {
       senPlaced: s?.senPlaced ?? p.sen_placed ?? 0,
       dewards: s?.dewards ?? (p.observer_kills || 0) + (p.sentry_kills || 0),
       campsStacked: s?.campsStacked ?? p.camps_stacked ?? 0,
+      dmgShare,
+      nwShare,
+      der,
+      kp,
+      archetype,
     };
   });
 
