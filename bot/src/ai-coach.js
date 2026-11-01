@@ -4,6 +4,7 @@ import {
   getHeroMetaStats,
   getRoleMetaRankings,
   resolveHeroByQuery,
+  getPlayerRecentPerformance,
 } from './opendota.js';
 
 const SYSTEM_INSTRUCTION =
@@ -166,11 +167,28 @@ export const AGENT_TOOLS = [
       required: ['query'],
     },
   },
+  {
+    name: 'get_player_roadmap',
+    description:
+      'ดูสมุดพกประเมินเกรด (S/A/B/C) และ Roadmap วางแผนพัฒนาฝีมือเฉพาะบุคคลย้อนหลัง 20 แมตช์สำหรับตนเองหรือเพื่อน',
+    parameters: {
+      type: 'object',
+      properties: {
+        target: {
+          type: 'string',
+          description:
+            'ชื่อเพื่อน หรือแท็ก เช่น <@647785506121449473> หรือไอดี Steam (ถ้าไม่ระบุหมายถึงตัวผู้สั่ง)',
+        },
+      },
+    },
+  },
 ];
 
 async function generateWithFallback({ prompt, systemInstruction, tools }) {
   const client = getClient();
-  if (!client) return null;
+  if (!client) {
+    throw new Error('ระบบ AI ยังไม่พร้อมใช้งาน: กรุณาตั้งค่า GEMINI_API_KEY ใน Environment Variables');
+  }
 
   const config = {
     systemInstruction: systemInstruction || SYSTEM_INSTRUCTION,
@@ -413,6 +431,78 @@ export async function analyzeRoleMetaOverview(roleQuery) {
   }
 }
 
+// 6. Personal Player Roadmap & Grade Evaluation (สมุดพกประเมินเกรด S/A/B/C + แผนพัฒนาฝีมือย้อนหลัง 20 แมตช์)
+export async function generatePlayerRoadmap(perf, playerName) {
+  const topHeroesStr = (perf.heroList || [])
+    .slice(0, 5)
+    .map(
+      (h) =>
+        `- ${h.hero}: เล่น ${h.games} เกม (ชนะ ${h.wins} แพ้ ${h.losses}, Winrate ${h.winrate}%), KDA ${h.avgKda}, Dmg เฉลี่ย ${h.avgDamage.toLocaleString()}`
+    )
+    .join('\n');
+
+  const sigStr =
+    (perf.signatureHeroes || [])
+      .map((h) => `${h.hero} (${h.games} เกม, Winrate ${h.winrate}%, KDA ${h.avgKda})`)
+      .join(', ') || 'ไม่มี (เล่นกระจายหลายตัว)';
+
+  const trapStr =
+    (perf.trapHeroes || [])
+      .map((h) => `${h.hero} (${h.games} เกม, Winrate ${h.winrate}%)`)
+      .join(', ') || 'ไม่มี (ไม่มีตัวที่แพ้หลุดลุ่ย)';
+
+  const prompt =
+    `[คำขอสมุดพกประเมินเกรดและ Roadmap พัฒนาฝีมือ Dota 2 ย้อนหลัง 20 แมตช์]:\n` +
+    `ผู้เล่น: ${playerName || perf.name} (Rank: ${perf.rank})\n` +
+    `สถิติรวม 20 แมตช์ล่าสุด:\n` +
+    `- ผลการแข่งขัน: ชนะ ${perf.wins} แพ้ ${perf.losses} (Winrate: ${perf.winrate}%)\n` +
+    `- สถิติเฉลี่ยต่อเกม: KDA ${perf.avgKills}/${perf.avgDeaths}/${perf.avgAssists} (Ratio: ${perf.kdaRatio})\n` +
+    `- การเงิน & ฟาร์ม: GPM ${perf.avgGpm}, XPM ${perf.avgXpm}, CS เฉลี่ย ${perf.avgLastHits} ตัว\n` +
+    `- ดาเมจ & ทีมไฟต์: Hero Damage เฉลี่ย ${perf.avgDamage.toLocaleString()} หน่วย, Hero Healing ${perf.avgHealing.toLocaleString()} หน่วย\n` +
+    `- ตำแหน่งการยืนเลน: Safe Lane ${perf.laneCounts.safe} เกม, Mid Lane ${perf.laneCounts.mid} เกม, Off Lane ${perf.laneCounts.off} เกม, อื่นๆ ${perf.laneCounts.other} เกม\n` +
+    `- ฮีโร่ที่เล่นบ่อย:\n${topHeroesStr}\n` +
+    `- ฮีโร่คู่บุญแบกทีม (Signature): ${sigStr}\n` +
+    `- ฮีโร่ที่ควรระวัง/ดูดแต้ม (Trap): ${trapStr}\n\n` +
+    `[ผลการประเมินเกรดตามอัลกอริทึม]:\n` +
+    `- เกรดรวม: ${perf.grades.overall}\n` +
+    `- การเงินและการฟาร์ม (Economy): GRADE ${perf.grades.economy}\n` +
+    `- พลังไฟต์และดาเมจ (Fight Impact): GRADE ${perf.grades.fight}\n` +
+    `- การเอาตัวรอด (Survivability): GRADE ${perf.grades.survival}\n` +
+    `- การเล่นเพื่อทีม (Teamplay): GRADE ${perf.grades.teamplay}\n\n` +
+    `[คำสั่ง]: ในฐานะยอดโค้ช AI Dota 2 (ทนายโตต้า) ประจำกิลด์ SleepKnight Gaming ให้เขียน "สมุดพกประเมินเกรดและ Roadmap วางแผนพัฒนาฝีมือเฉพาะบุคคล" ของผู้เล่นคนนี้อย่างจริงจัง มีระดับ สุภาพ ให้เกียรติ ให้กำลังใจ ไม่ซ้ำเติม (ชี้จุดบกพร่องอย่างสร้างสรรค์) โดยจัดหัวข้อดังนี้:\n\n` +
+    `🎖️ **เกรดประเมินฟอร์มภาพรวม**: ระบุเกรดรวม ${perf.grades.overall} พร้อมฉายาคมๆ ที่เข้ากับสไตล์\n` +
+    `📊 **คะแนนประเมินรายด้าน (4 มิติ)**:\n` +
+    `• 🌾 **การเงินและการฟาร์ม (Economy):** \`GRADE ${perf.grades.economy}\` พร้อมคอมเมนต์สั้นๆ ถึง GPM/CS\n` +
+    `• ⚔️ **พลังไฟต์และดาเมจ (Fight Impact):** \`GRADE ${perf.grades.fight}\` พร้อมคอมเมนต์ถึงดาเมจในทีมไฟต์\n` +
+    `• 🛡️ **การเอาตัวรอด & ยืนตำแหน่ง (Survivability):** \`GRADE ${perf.grades.survival}\` พร้อมคอมเมนต์อัตราการตาย\n` +
+    `• 👁️ **การเล่นเพื่อทีม & วิชั่น (Teamplay):** \`GRADE ${perf.grades.teamplay}\` พร้อมคอมเมนต์แอสซิสต์และการซ้อนเพื่อน\n\n` +
+    `1. 📈 **สรุปภาพรวมฟอร์มช่วงนี้ (Recent Form Trend)**: วิเคราะห์ความสม่ำเสมอ ฟอร์มกำลังขึ้นหรือกำลังติดขัด และตำแหน่งถนัด\n` +
+    `2. 💎 **จุดเด่นที่เป็นอาวุธลับ (Key Strengths)**: จุดที่ผู้เล่นคนนี้ทำได้ดีเยี่ยม น่าชื่นชม\n` +
+    `3. ⚠️ **จุดรั่วที่ฉุดดาวลง (Bottlenecks / Areas to Improve)**: ชี้จุดผิดพลาดซ้ำๆ อย่างสุภาพ เช่น การตายช่วงกลางเกม, จังหวะดันเลนลึก, หรือการออกไอเทมแก้ทาง\n` +
+    `4. 🗡️ **Hero Pool คู่บุญสำหรับใช้ไต่แรงค์**: แนะนำตัวที่ควรหยิบไต่แรงค์ใน 10 เกมข้างหน้า (พร้อมแนะนำ Facet) และตัวที่ควรพักไว้ก่อน\n` +
+    `5. 🚀 **Roadmap 3 สเต็ปเพื่อดันเกรดสู่ระดับถัดไป (Actionable Homework)**: การบ้าน 3 ข้อที่ปฏิบัติได้จริงในการลงแรงค์ครั้งต่อไป\n` +
+    `• คำพูดสรุปให้กำลังใจที่อบอุ่นและสร้างแรงบันดาลใจจากโค้ช SleepKnight\n\n` +
+    `ตอบเป็นภาษาไทย ละเอียด สวยงาม มีความเป็นมืออาชีพ และเน้นพัฒนาผู้เล่นจริง`;
+
+  try {
+    const { res } = await generateWithFallback({
+      prompt,
+      systemInstruction: SYSTEM_INSTRUCTION,
+    });
+    return {
+      perf,
+      playerName: playerName || perf.name,
+      text: res.text || 'ไม่สามารถสร้างใบประเมินได้ในขณะนี้',
+    };
+  } catch (err) {
+    return {
+      perf,
+      playerName: playerName || perf.name,
+      text: `⚠️ ระบบ AI ขัดข้อง: ${err.message}`,
+    };
+  }
+}
+
 // ระบบ Autonomous AI Agent: รองรับ Function Calling + บริบทแชทย้อนหลัง + บริบทสถิติสด + บทสนทนาตอบกลับทันใจ (< 2 วินาที)
 export async function runAutonomousAgent(userInput, discordUserId, actions, chatHistory = [], extraContext = '') {
   const client = getClient();
@@ -505,6 +595,11 @@ export async function runAutonomousAgent(userInput, discordUserId, actions, chat
           if (actions.onMetaGuide) {
             await actions.onMetaGuide(args?.query);
             toolActionSummary = `📖 ดึงข้อมูลคู่มือเมต้าและ Facet สำหรับ "${args?.query}" ให้เรียบร้อยครับ`;
+          }
+        } else if (name === 'get_player_roadmap') {
+          if (actions.onPlayerRoadmap) {
+            await actions.onPlayerRoadmap(args?.target);
+            toolActionSummary = `🎖️ ดึงสมุดพกประเมินเกรดและ Roadmap พัฒนาฝีมือของ ${args?.target || 'ผู้เล่น'} ให้เรียบร้อยครับ`;
           }
         }
       }

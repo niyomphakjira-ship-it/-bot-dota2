@@ -89,6 +89,42 @@ export function getLinkedAccountId(discordUserId) {
   return store.players[discordUserId]?.accountId || null;
 }
 
+export function resolvePlayerAccount(query, defaultDiscordUserId) {
+  const store = loadStore();
+  const clean = String(query || '').trim();
+
+  if (clean) {
+    const mentionMatch = clean.match(/\d{17,20}/);
+    if (mentionMatch && store.players[mentionMatch[0]]?.accountId) {
+      return {
+        accountId: store.players[mentionMatch[0]].accountId,
+        tag: store.players[mentionMatch[0]].discordTag || `<@${mentionMatch[0]}>`,
+      };
+    }
+
+    const parsed = parseAccountId(clean);
+    if (parsed) {
+      return { accountId: parsed, tag: null };
+    }
+
+    const lower = clean.toLowerCase();
+    for (const [dId, p] of Object.entries(store.players)) {
+      if (p.discordTag && p.discordTag.toLowerCase().includes(lower)) {
+        return { accountId: p.accountId, tag: p.discordTag };
+      }
+    }
+  }
+
+  if (defaultDiscordUserId && store.players[defaultDiscordUserId]?.accountId) {
+    return {
+      accountId: store.players[defaultDiscordUserId].accountId,
+      tag: store.players[defaultDiscordUserId].discordTag || null,
+    };
+  }
+
+  return null;
+}
+
 export function setWatchChannel(guildId, channelId) {
   const store = loadStore();
   if (!channelId) {
@@ -221,6 +257,166 @@ export async function getPlayerStats(accountId) {
     lose: wl.lose || 0,
     winrate,
     topHeroes,
+  };
+}
+
+// Fetch 20 Recent Matches & Calculate Comprehensive Performance Data for Report Card
+export async function getPlayerRecentPerformance(accountId, limit = 20) {
+  await ensureHeroesLoaded();
+  const [profileRes, matchesRes] = await Promise.all([
+    fetch(`${OPENDOTA_BASE}/players/${accountId}`),
+    fetch(`${OPENDOTA_BASE}/players/${accountId}/recentMatches`),
+  ]);
+
+  if (!profileRes.ok) throw new Error('ไม่สามารถดึงข้อมูลโปรไฟล์ได้');
+  const profile = await profileRes.json();
+  if (!profile?.profile) {
+    throw new Error('ไม่พบโปรไฟล์ผู้เล่น (ตรวจสอบ Account ID หรือเปิด Expose Public Match Data ใน Dota 2)');
+  }
+
+  const rawMatches = matchesRes.ok ? await matchesRes.json() : [];
+  if (!Array.isArray(rawMatches) || rawMatches.length === 0) {
+    throw new Error('ไม่พบประวัติการเล่นล่าสุด 20 แมตช์ (โปรดตรวจสอบว่าเปิดการแชร์ข้อมูลสาธารณะในเกม)');
+  }
+
+  const matches = rawMatches.slice(0, limit);
+  let wins = 0;
+  let totalKills = 0,
+    totalDeaths = 0,
+    totalAssists = 0;
+  let totalGpm = 0,
+    totalXpm = 0,
+    totalDamage = 0,
+    totalLastHits = 0,
+    totalHealing = 0;
+
+  const heroMap = new Map();
+  const laneCounts = { mid: 0, safe: 0, off: 0, other: 0 };
+
+  for (const m of matches) {
+    const isRadiant = m.player_slot < 128;
+    const won = (isRadiant && m.radiant_win) || (!isRadiant && !m.radiant_win);
+    if (won) wins++;
+
+    totalKills += m.kills ?? 0;
+    totalDeaths += m.deaths ?? 0;
+    totalAssists += m.assists ?? 0;
+    totalGpm += m.gold_per_min || 0;
+    totalXpm += m.xp_per_min || 0;
+    totalDamage += m.hero_damage || 0;
+    totalLastHits += m.last_hits || 0;
+    totalHealing += m.hero_healing || 0;
+
+    if (m.lane === 1) laneCounts.safe++;
+    else if (m.lane === 2) laneCounts.mid++;
+    else if (m.lane === 3) laneCounts.off++;
+    else laneCounts.other++;
+
+    const prev = heroMap.get(m.hero_id) || {
+      games: 0,
+      wins: 0,
+      kills: 0,
+      deaths: 0,
+      assists: 0,
+      damage: 0,
+    };
+    prev.games++;
+    if (won) prev.wins++;
+    prev.kills += m.kills ?? 0;
+    prev.deaths += m.deaths ?? 0;
+    prev.assists += m.assists ?? 0;
+    prev.damage += m.hero_damage || 0;
+    heroMap.set(m.hero_id, prev);
+  }
+
+  const count = matches.length || 1;
+  const winrate = Number(((wins / count) * 100).toFixed(1));
+  const avgKills = Number((totalKills / count).toFixed(1));
+  const avgDeaths = Number((totalDeaths / count).toFixed(1));
+  const avgAssists = Number((totalAssists / count).toFixed(1));
+  const kdaRatio =
+    totalDeaths > 0
+      ? Number(((totalKills + totalAssists) / totalDeaths).toFixed(2))
+      : Number((totalKills + totalAssists).toFixed(2));
+  const avgGpm = Math.round(totalGpm / count);
+  const avgXpm = Math.round(totalXpm / count);
+  const avgDamage = Math.round(totalDamage / count);
+  const avgLastHits = Math.round(totalLastHits / count);
+  const avgHealing = Math.round(totalHealing / count);
+
+  const heroList = [...heroMap.entries()]
+    .map(([id, h]) => ({
+      hero: getHeroName(id),
+      games: h.games,
+      wins: h.wins,
+      losses: h.games - h.wins,
+      winrate: Math.round((h.wins / h.games) * 100),
+      avgKda: `${(h.kills / h.games).toFixed(1)}/${(h.deaths / h.games).toFixed(1)}/${(h.assists / h.games).toFixed(1)}`,
+      avgDamage: Math.round(h.damage / h.games),
+    }))
+    .sort((a, b) => b.games - a.games || b.winrate - a.winrate);
+
+  const signatureHeroes = heroList.filter((h) => h.games >= 2 && h.winrate >= 50).slice(0, 3);
+  const trapHeroes = heroList.filter((h) => h.games >= 2 && h.winrate < 40).slice(0, 2);
+
+  // Sub-Grades
+  let ecoGrade = 'C';
+  if (avgGpm >= 560 || avgLastHits >= 220) ecoGrade = 'S';
+  else if (avgGpm >= 480 || avgLastHits >= 170) ecoGrade = 'A';
+  else if (avgGpm >= 380 || avgLastHits >= 120) ecoGrade = 'B';
+
+  let fightGrade = 'C';
+  if (avgDamage >= 24000) fightGrade = 'S';
+  else if (avgDamage >= 18000) fightGrade = 'A';
+  else if (avgDamage >= 12000) fightGrade = 'B';
+
+  let survivalGrade = 'C';
+  if (avgDeaths <= 4.5) survivalGrade = 'S';
+  else if (avgDeaths <= 6.5) survivalGrade = 'A';
+  else if (avgDeaths <= 8.5) survivalGrade = 'B';
+
+  let teamGrade = 'C';
+  if (avgAssists >= 14 || avgHealing >= 3000) teamGrade = 'S';
+  else if (avgAssists >= 10 || avgHealing >= 1500) teamGrade = 'A';
+  else if (avgAssists >= 7) teamGrade = 'B';
+
+  // Overall Grade
+  let overallGrade = 'GRADE B (มาตรฐานแน่น)';
+  if (winrate >= 65 && kdaRatio >= 3.5) overallGrade = 'GRADE S (ระดับพระกาฬ / แบกทีมเต็มสูบ)';
+  else if (winrate >= 55 || (winrate >= 50 && kdaRatio >= 3.0))
+    overallGrade = 'GRADE A (ตัวตึงประจำทีม)';
+  else if (winrate >= 45) overallGrade = 'GRADE B (มาตรฐานแน่น)';
+  else overallGrade = 'GRADE C (ช่วงเก็บเลเวล / กำลังพัฒนา)';
+
+  return {
+    accountId,
+    name: profile.profile.personaname || `Player ${accountId}`,
+    avatar: profile.profile.avatarfull || null,
+    rank: formatRankTier(profile.rank_tier, profile.leaderboard_rank),
+    gamesCount: count,
+    wins,
+    losses: count - wins,
+    winrate,
+    avgKills,
+    avgDeaths,
+    avgAssists,
+    kdaRatio,
+    avgGpm,
+    avgXpm,
+    avgDamage,
+    avgLastHits,
+    avgHealing,
+    heroList,
+    signatureHeroes,
+    trapHeroes,
+    laneCounts,
+    grades: {
+      overall: overallGrade,
+      economy: ecoGrade,
+      fight: fightGrade,
+      survival: survivalGrade,
+      teamplay: teamGrade,
+    },
   };
 }
 

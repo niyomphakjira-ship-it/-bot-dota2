@@ -36,6 +36,8 @@ import {
   getMatchById,
   setWatchChannel,
   startMatchWatcher,
+  getPlayerRecentPerformance,
+  resolvePlayerAccount,
 } from './opendota.js';
 import {
   analyzeDraft,
@@ -43,6 +45,7 @@ import {
   analyzeSituationalBuild,
   analyzeHeroMetaGuide,
   analyzeRoleMetaOverview,
+  generatePlayerRoadmap,
   runAutonomousAgent,
 } from './ai-coach.js';
 import { generateMatchBanner } from './match-image.js';
@@ -546,6 +549,69 @@ async function handleMetaCommand(query, replyTarget) {
   }
 }
 
+async function handleRoadmapCommand(discordUserId, targetQuery, replyTarget) {
+  const resolved = resolvePlayerAccount(targetQuery, discordUserId);
+  if (!resolved || !resolved.accountId) {
+    const msg =
+      '⚠️ ยังไม่ได้ผูกไอดี Dota 2 ครับ! ผูกไอดีง่ายๆ พิมพ์เช่น `!link 947857860` หรือระบุไอดีเพื่อน `!roadmap 947857860` หรือ `!roadmap @เพื่อน`';
+    return replyTarget.isInteraction
+      ? replyTarget.reply({ content: msg, flags: 64 })
+      : replyTarget.reply(msg);
+  }
+
+  await deferIfNeeded(replyTarget);
+  try {
+    const perf = await getPlayerRecentPerformance(resolved.accountId, 20);
+    const res = await generatePlayerRoadmap(perf, resolved.tag || perf.name);
+
+    let embedColor = THEME.accent;
+    if (perf.grades.overall.includes('GRADE S')) embedColor = THEME.win;
+    else if (perf.grades.overall.includes('GRADE C')) embedColor = THEME.loss;
+
+    const title = `🎖️ สมุดพกและ Roadmap พัฒนาฝีมือ · ${perf.name}`;
+    const text = res.text || '';
+
+    if (text.length <= 3900) {
+      const embed = new EmbedBuilder()
+        .setColor(embedColor)
+        .setTitle(title)
+        .setDescription(text)
+        .setFooter({ text: 'SleepKnight AI Coach · Live OpenDota & High-MMR Roadmap' });
+      if (perf.avatar) embed.setThumbnail(perf.avatar);
+      return sendReply(replyTarget, { embeds: [embed] });
+    }
+
+    let splitIdx = text.lastIndexOf('\n### ', 3700);
+    if (splitIdx < 1500) splitIdx = text.lastIndexOf('\n\n', 3700);
+    if (splitIdx < 1000) splitIdx = 3700;
+
+    const part1 = text.slice(0, splitIdx).trim();
+    const part2 = text.slice(splitIdx).trim();
+
+    const embed1 = new EmbedBuilder()
+      .setColor(embedColor)
+      .setTitle(`${title} (ตอนที่ 1/2)`)
+      .setDescription(part1);
+    if (perf.avatar) embed1.setThumbnail(perf.avatar);
+
+    const embed2 = new EmbedBuilder()
+      .setColor(embedColor)
+      .setTitle(`${title} (ตอนที่ 2/2)`)
+      .setDescription(part2.slice(0, 3950))
+      .setFooter({ text: 'SleepKnight AI Coach · Live OpenDota & High-MMR Roadmap' });
+
+    await sendReply(replyTarget, { embeds: [embed1] });
+    if (replyTarget.isInteraction && replyTarget.followUp) {
+      await replyTarget.followUp({ embeds: [embed2] }).catch(() => {});
+    } else if (replyTarget.channel?.send) {
+      await replyTarget.channel.send({ embeds: [embed2] }).catch(() => {});
+    }
+    return;
+  } catch (err) {
+    return sendReply(replyTarget, { content: `⚠️ ดึงข้อมูล Roadmap ไม่สำเร็จ: ${err.message}` });
+  }
+}
+
 // 4. AI Draft & Coach (Gemini 3.8 Flash + OpenDota Statistical Matchups)
 async function handleDraftCommand(enemiesText, discordUserId, replyTarget) {
   if (!enemiesText || !enemiesText.trim()) {
@@ -623,6 +689,7 @@ function buildInfoEmbed() {
     .setColor(THEME.dark)
     .setTitle('💙 SleepKnight Dota 2 Bot & AI Coach')
     .setDescription(
+      '`!roadmap [@friend]` · สมุดพกประเมินเกรด (S/A/B/C) & แผนพัฒนาฝีมือ\n' +
       '`!meta <hero|role>` · คู่มือเมต้าเจาะลึก & วิเคราะห์ Facet / Innate\n' +
       '`!build <hero> vs <enemy>` · ไอเทมแก้ทางตามสถานการณ์จริง\n' +
       '`!combo <hero> with <ally>` · คอมโบเลนคู่และทีมไฟต์\n' +
@@ -760,6 +827,15 @@ client.once('ready', async () => {
           .setDescription('ชื่อฮีโร่ (เช่น pa, axe, slark) หรือตำแหน่ง (เช่น carry, mid, offlane, support)')
           .setRequired(true)
       ),
+    new SlashCommandBuilder()
+      .setName('roadmap')
+      .setDescription('สมุดพกประเมินเกรด (S/A/B/C) และ Roadmap วางแผนพัฒนาฝีมือ 20 แมตช์ล่าสุด')
+      .addStringOption((o) =>
+        o
+          .setName('player')
+          .setDescription('เพื่อนที่ต้องการส่อง (แท็ก @ หรือระบุไอดี ถ้าไม่ใส่หมายถึงตัวเอง)')
+          .setRequired(false)
+      ),
     new SlashCommandBuilder().setName('activity').setDescription('Launch Multiplayer Dota 2 Arena'),
     new SlashCommandBuilder().setName('info').setDescription('Commands'),
   ].map((c) => c.toJSON());
@@ -866,6 +942,10 @@ client.on('interactionCreate', async (interaction) => {
     );
   }
   if (commandName === 'meta') return handleMetaCommand(interaction.options.getString('query') || '', replyTarget);
+  if (commandName === 'roadmap') {
+    const targetPlayer = interaction.options.getUser('player')?.id || interaction.options.getString('player') || '';
+    return handleRoadmapCommand(interaction.user.id, targetPlayer, replyTarget);
+  }
   if (commandName === 'ask') return handleAskCommand(interaction.options.getString('question'), interaction.user.id, replyTarget);
   if (commandName === 'link') {
     const targetUser = interaction.options.getUser('user') || interaction.user;
@@ -941,6 +1021,18 @@ client.on('messageCreate', async (message) => {
     return handleMetaCommand(raw.replace(/^(!|\/)meta\s*/i, ''), replyTarget);
   }
 
+  if (
+    lower === '!roadmap' ||
+    lower === '/roadmap' ||
+    lower.startsWith('!roadmap ') ||
+    lower.startsWith('/roadmap ') ||
+    lower === '!grade' ||
+    lower.startsWith('!grade ')
+  ) {
+    const rawArgs = raw.replace(/^(!|\/)(roadmap|grade)\s*/i, '').trim();
+    return handleRoadmapCommand(message.author.id, rawArgs, replyTarget);
+  }
+
   if (lower.startsWith('!ask ') || lower.startsWith('/ask ')) {
     return handleAskCommand(raw.replace(/^(!|\/)ask\s*/i, ''), message.author.id, replyTarget);
   }
@@ -992,7 +1084,7 @@ client.on('messageCreate', async (message) => {
   const matchIdMatch = raw.match(/\b(\d{10})\b/);
   const hasIntentOrMatch =
     Boolean(matchIdMatch) ||
-    /^(วิเคราะห์|ส่อง|เช็ค|ดูฟอร์ม|แก้ทาง|ช่วย|ขอ|บอกหน่อย|สอน|ออกของ|บิลด์|build|combo|คอมโบ|meta|เมต้า|facet|แพตช์|patch)/i.test(raw);
+    /^(วิเคราะห์|ส่อง|เช็ค|ดูฟอร์ม|แก้ทาง|ช่วย|ขอ|บอกหน่อย|สอน|ออกของ|บิลด์|build|combo|คอมโบ|meta|เมต้า|facet|แพตช์|patch|roadmap|เกรด|สมุดพก|ประเมิน)/i.test(raw);
 
   if (isMentioned || isReply || startsWithBot || hasIntentOrMatch || message.channel.isDMBased()) {
     let cleanPrompt = raw
@@ -1037,6 +1129,7 @@ client.on('messageCreate', async (message) => {
         onDraftAnalysis: async (heroes) => handleDraftCommand(heroes, message.author.id, replyTarget),
         onRecommendBuild: async (hero, enemies, allies) => handleBuildCommand(hero, enemies, allies, replyTarget),
         onMetaGuide: async (query) => handleMetaCommand(query, replyTarget),
+        onPlayerRoadmap: async (target) => handleRoadmapCommand(message.author.id, target || '', replyTarget),
         onLinkPlayer: async (accId, target) => {
           const targetMention = target ? String(target).match(/\d{17,20}/)?.[0] : null;
           const targetUser = targetMention
