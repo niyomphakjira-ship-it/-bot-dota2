@@ -1,5 +1,10 @@
 import { GoogleGenAI } from '@google/genai';
-import { getStatisticalDraftCounters } from './opendota.js';
+import {
+  getStatisticalDraftCounters,
+  getHeroMetaStats,
+  getRoleMetaRankings,
+  resolveHeroByQuery,
+} from './opendota.js';
 
 const SYSTEM_INSTRUCTION =
   'คุณคือบอท AI Dota 2 ยอดโค้ชอัจฉริยะประจำเซิร์ฟเวอร์ Discord "SleepKnight Gaming" (หรือที่รู้จักกันในนาม ทนายโตต้า) ' +
@@ -143,6 +148,22 @@ export const AGENT_TOOLS = [
         allies: { type: 'string', description: 'รายชื่อเพื่อนร่วมทีมที่ต้องการหาคอมโบด้วย (ถ้ามี)' },
       },
       required: ['hero'],
+    },
+  },
+  {
+    name: 'get_meta_guide',
+    description:
+      'ดูคู่มือเจาะลึกเมต้าแพตช์ปัจจุบัน การเลือก Facet & Innate Ability, Skill & Talent Build และ Item Progression สำหรับฮีโร่ หรือดูอันดับฮีโร่เมต้าตามตำแหน่ง (Carry, Mid, Offlane, Support)',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description:
+            'ชื่อฮีโร่ เช่น pa, axe, slark, invoker หรือชื่อตำแหน่ง เช่น carry, mid, offlane, support',
+        },
+      },
+      required: ['query'],
     },
   },
 ];
@@ -299,6 +320,99 @@ export async function analyzeSituationalBuild(hero, enemiesText = '', alliesText
   }
 }
 
+// 5. Meta & Facet Guide Analyzer (คู่มือเจาะลึกเมต้า + วิเคราะห์ Facet/Innate + สถิติสด High-MMR)
+export async function analyzeHeroMetaGuide(heroQuery) {
+  const stats = await getHeroMetaStats(heroQuery);
+  if (!stats) {
+    return {
+      hero: heroQuery,
+      text: `ไม่พบข้อมูลฮีโร่ "${heroQuery}" กรุณาระบุชื่อฮีโร่ เช่น pa, axe, slark, jugg, pudge`,
+    };
+  }
+
+  const prompt =
+    `[คำขอคู่มือวิเคราะห์เมต้าและ Facet เจาะลึก Dota 2]:\n` +
+    `ฮีโร่: ${stats.hero} (สาย ${stats.primaryAttr}, การโจมตี: ${stats.attackType})\n` +
+    `สถิติสดจาก OpenDota ในแพตช์ปัจจุบัน:\n` +
+    `- Winrate ในระดับ Divine / Immortal: ${stats.divineWinrate}% (เล่น ${stats.divinePicks.toLocaleString()} แมตช์)\n` +
+    `- สถิติรวมทุกระดับแรงค์: Winrate ${stats.overallWinrate}% (${stats.overallPicks.toLocaleString()} แมตช์)\n` +
+    `- สถิติโปรเพลเยอร์: Pick ${stats.proPicks} แมตช์ (Winrate ${stats.proWinrate}%), Ban ${stats.proBans} ครั้ง\n` +
+    `- Roles: ${stats.roles.join(', ')}\n\n` +
+    `[คำสั่ง]: ในฐานะยอดโค้ช Dota 2 ประจำกิลด์ SleepKnight Gaming ให้เขียนบทวิเคราะห์ "คู่มือเมต้าและ Facet เจาะลึก (Comprehensive Meta & Facet Guide)" ของฮีโร่นี้ในแพตช์ปัจจุบันอย่างละเอียดที่สุด ระดับ High-MMR/Pro Guide สุภาพ ไพเราะ ให้เกียรติ และให้กำลังใจผู้เล่น โดยแบ่งเป็น 7 หัวข้อดังนี้:\n\n` +
+    `1. 📊 **สถานะในเมต้าปัจจุบัน (Current Meta Tier & Overview)**: สรุปความเก่ง Tier (S/A/B/C) เหตุผลที่ฮิตหรือตกเมต้า และตำแหน่งที่เหมาะสมที่สุด\n` +
+    `2. 🎭 **เจาะลึก Facet & Innate Ability (หัวใจสำคัญ)**:\n` +
+    `   - อธิบาย **Innate Ability** ประจำตัว และเทคนิคการใช้\n` +
+    `   - เปรียบเทียบ **Facet แต่ละอันของฮีโร่นี้**: อธิบายการทำงาน, ข้อดี-ข้อเสีย, และ **เงื่อนไขชัดเจนว่าควรเลือกอันไหนในสถานการณ์ใด** (เช่น เมื่อเจอตัวหนา vs ตัวบาง, ต้องการ Early Tempo vs Late Game Scaling)\n` +
+    `3. 📜 **แนวทางการอัปสกิล & ทาเลนต์ (Skill & Talent Build)**: ลำดับการอัปสกิลในเลน และการเลือกทาเลนต์ Lv 10/15/20/25 ตามสถานการณ์\n` +
+    `4. ⚔️ **Item Progression ตามสถานการณ์**:\n` +
+    `   - Starting Items & Laning Phase\n` +
+    `   - Core Mid Game (Power Spike Item)\n` +
+    `   - Late Game & Situational Luxuries (เช่น BKB, Nullifier, Silver Edge, Aghanim's Scepter/Shard)\n` +
+    `   - Neutral Items แนะนำ (Tier 1 ถึง Tier 5)\n` +
+    `5. ⚡ **จุดเปลี่ยนและจังหวะ Power Spike**: ช่วงเวลาหรือไอเทมจังหวะไหนที่ฮีโร่นี้เก่งที่สุดที่ทีมควรรวมตัวไฟต์\n` +
+    `6. 🤝 **คู่หูในเลนและฮีโร่แก้ทาง (Synergies & Counters)**: ใครยืนคู่ด้วยแล้วเถื่อน, ใครแก้ทางฮีโร่นี้ และวิธีเอาตัวรอด\n` +
+    `7. 💡 **ทริคและ Mindset จากโค้ช SleepKnight**: ข้อควรระวังและการยืนตำแหน่ง (Positioning) พร้อมคำพูดให้กำลังใจเพื่อนร่วมทีมอย่างอบอุ่น\n\n` +
+    `ตอบเป็นภาษาไทยอย่างละเอียด ลึกซึ้ง ครบถ้วน และใช้งานได้จริงในการลงแรงค์`;
+
+  try {
+    const { res } = await generateWithFallback({
+      prompt,
+      systemInstruction: SYSTEM_INSTRUCTION,
+    });
+    return {
+      hero: stats.hero,
+      stats,
+      text: res.text || 'ไม่สามารถสร้างบทวิเคราะห์ได้ในขณะนี้',
+    };
+  } catch (err) {
+    return {
+      hero: stats.hero,
+      stats,
+      text: `⚠️ ระบบ AI ขัดข้อง: ${err.message}`,
+    };
+  }
+}
+
+export async function analyzeRoleMetaOverview(roleQuery) {
+  const ranking = await getRoleMetaRankings(roleQuery);
+  const heroListStr = (ranking.heroes || [])
+    .map(
+      (h, i) =>
+        `${i + 1}. **${h.name}** (${h.primaryAttr}) — Winrate: \`${h.winrate}%\` (${h.picks.toLocaleString()} แมตช์)`
+    )
+    .join('\n');
+
+  const prompt =
+    `[คำขอวิเคราะห์เมต้าฮีโร่ตามตำแหน่ง Dota 2]:\n` +
+    `ตำแหน่ง: ${ranking.roleTitle}\n` +
+    `อันดับฮีโร่ Winrate สูงสุดในระดับ Divine/Immortal ปัจจุบัน (จาก OpenDota Live Stats):\n` +
+    `${heroListStr}\n\n` +
+    `[คำสั่ง]: ในฐานะยอดโค้ช Dota 2 ประจำกิลด์ SleepKnight Gaming ให้เขียนสรุปภาพรวมเมต้าสำหรับตำแหน่ง "${ranking.roleTitle}" ในแพตช์ปัจจุบันอย่างละเอียด:\n` +
+    `1. 👑 **ฮีโร่ Tier S & Tier A ประจำตำแหน่ง**: สรุปตัวท็อป 3-4 ตัว ว่าทำไมถึงชนะเยอะในแพตช์นี้ และ Facet ประจำตัวที่โปรเพลเยอร์นิยมหยิบ\n` +
+    `2. 🎯 **หัวใจสำคัญของการเล่นตำแหน่งนี้ในแพตช์ปัจจุบัน**: เช่น การคุมเลน, จังหวะตัดเลน, การดึงครีป, ไทมิ่งรูนน้ำ/Wisdom, หรือการคุม Tormentor/Roshan\n` +
+    `3. ⚔️ **ไอเทมเมต้าที่ต้องมี (Must-Have Meta Items)**: ไอเทมที่กำลังส่งผลต่อชัยชนะสูงสุดของตำแหน่งนี้\n` +
+    `4. 💡 **คำแนะนำและให้กำลังใจจากโค้ช SleepKnight**: สุภาพ ไพเราะ และให้กำลังใจผู้เล่นทุกคน\n\n` +
+    `ตอบเป็นภาษาไทย ละเอียด เป็นมืออาชีพ และอ่านง่าย`;
+
+  try {
+    const { res } = await generateWithFallback({
+      prompt,
+      systemInstruction: SYSTEM_INSTRUCTION,
+    });
+    return {
+      roleTitle: ranking.roleTitle,
+      heroes: ranking.heroes,
+      text: res.text || 'ไม่สามารถสร้างบทวิเคราะห์ได้ในขณะนี้',
+    };
+  } catch (err) {
+    return {
+      roleTitle: ranking.roleTitle,
+      heroes: ranking.heroes,
+      text: `⚠️ ระบบ AI ขัดข้อง: ${err.message}`,
+    };
+  }
+}
+
 // ระบบ Autonomous AI Agent: รองรับ Function Calling + บริบทแชทย้อนหลัง + บริบทสถิติสด + บทสนทนาตอบกลับทันใจ (< 2 วินาที)
 export async function runAutonomousAgent(userInput, discordUserId, actions, chatHistory = [], extraContext = '') {
   const client = getClient();
@@ -386,6 +500,11 @@ export async function runAutonomousAgent(userInput, discordUserId, actions, chat
           if (actions.onRecommendBuild) {
             await actions.onRecommendBuild(args?.hero, args?.enemies, args?.allies);
             toolActionSummary = `🛡️ แนะนำแนวทางการออกของและแก้ทางสำหรับ ${args?.hero || 'ฮีโร่'} ให้เรียบร้อยครับ`;
+          }
+        } else if (name === 'get_meta_guide') {
+          if (actions.onMetaGuide) {
+            await actions.onMetaGuide(args?.query);
+            toolActionSummary = `📖 ดึงข้อมูลคู่มือเมต้าและ Facet สำหรับ "${args?.query}" ให้เรียบร้อยครับ`;
           }
         }
       }

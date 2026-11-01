@@ -37,7 +37,14 @@ import {
   setWatchChannel,
   startMatchWatcher,
 } from './opendota.js';
-import { analyzeDraft, askDotaCoach, analyzeSituationalBuild, runAutonomousAgent } from './ai-coach.js';
+import {
+  analyzeDraft,
+  askDotaCoach,
+  analyzeSituationalBuild,
+  analyzeHeroMetaGuide,
+  analyzeRoleMetaOverview,
+  runAutonomousAgent,
+} from './ai-coach.js';
 import { generateMatchBanner } from './match-image.js';
 import { startMultiplayerServer } from './multiplayer-server.js';
 
@@ -477,6 +484,68 @@ async function handleBuildCommand(heroText, enemiesText, allyText, replyTarget) 
   }
 }
 
+async function handleMetaCommand(query, replyTarget) {
+  const clean = String(query || '').trim();
+  if (!clean) {
+    const msg = 'ระบุชื่อฮีโร่ หรือตำแหน่ง เช่น `/meta query:pa` หรือ `!meta carry` หรือ `!meta mid`';
+    return replyTarget.isInteraction
+      ? replyTarget.reply({ content: msg, flags: 64 })
+      : replyTarget.reply(msg);
+  }
+
+  await deferIfNeeded(replyTarget);
+  try {
+    const isRole = /^(carry|mid|offlane|pos1|pos2|pos3|pos4|pos5|support|แครี่|เลนกลาง|มิด|ออฟเลน|ซัพ|ซัพพอร์ต)$/i.test(clean);
+    const res = isRole
+      ? await analyzeRoleMetaOverview(clean)
+      : await analyzeHeroMetaGuide(clean);
+
+    const title = res.hero
+      ? `⚔️ Meta & Facet Guide · ${res.hero} (${res.stats?.divineWinrate ? `${res.stats.divineWinrate}% Winrate` : 'Live Meta'})`
+      : `👑 Meta Rankings & Role Guide · ${res.roleTitle || clean.toUpperCase()}`;
+
+    const text = res.text || '';
+    if (text.length <= 3900) {
+      const embed = new EmbedBuilder()
+        .setColor(THEME.accent)
+        .setTitle(title)
+        .setDescription(text)
+        .setFooter({ text: 'SleepKnight AI Coach · Live OpenDota & High-MMR Meta' });
+
+      return sendReply(replyTarget, { embeds: [embed] });
+    }
+
+    // ข้อความยาวเกิน 3,900 ตัวอักษร ให้ตัดแบ่งเป็น 2 ตอนตามหัวข้อ markdown เพื่อไม่ให้ตกหล่น
+    let splitIdx = text.lastIndexOf('\n### ', 3700);
+    if (splitIdx < 1500) splitIdx = text.lastIndexOf('\n\n', 3700);
+    if (splitIdx < 1000) splitIdx = 3700;
+
+    const part1 = text.slice(0, splitIdx).trim();
+    const part2 = text.slice(splitIdx).trim();
+
+    const embed1 = new EmbedBuilder()
+      .setColor(THEME.accent)
+      .setTitle(`${title} (ตอนที่ 1/2)`)
+      .setDescription(part1);
+
+    const embed2 = new EmbedBuilder()
+      .setColor(THEME.accent)
+      .setTitle(`${title} (ตอนที่ 2/2)`)
+      .setDescription(part2.slice(0, 3950))
+      .setFooter({ text: 'SleepKnight AI Coach · Live OpenDota & High-MMR Meta' });
+
+    await sendReply(replyTarget, { embeds: [embed1] });
+    if (replyTarget.isInteraction && replyTarget.followUp) {
+      await replyTarget.followUp({ embeds: [embed2] }).catch(() => {});
+    } else if (replyTarget.channel?.send) {
+      await replyTarget.channel.send({ embeds: [embed2] }).catch(() => {});
+    }
+    return;
+  } catch (err) {
+    return sendReply(replyTarget, { content: `⚠️ ดึงข้อมูลเมต้าไม่สำเร็จ: ${err.message}` });
+  }
+}
+
 // 4. AI Draft & Coach (Gemini 3.8 Flash + OpenDota Statistical Matchups)
 async function handleDraftCommand(enemiesText, discordUserId, replyTarget) {
   if (!enemiesText || !enemiesText.trim()) {
@@ -552,12 +621,14 @@ async function handleActivityInvite(voiceChannel, replyTarget) {
 function buildInfoEmbed() {
   return new EmbedBuilder()
     .setColor(THEME.dark)
-    .setTitle('Dota 2 Bot')
+    .setTitle('💙 SleepKnight Dota 2 Bot & AI Coach')
     .setDescription(
-      '`!join` · `!leave` · `!sound` · `!say <text>`\n' +
-      '`!link <id>` · `!stat` · `!lastmatch` · `!watch`\n' +
-      '`!counter [hero]` · `!draft <heroes>` · `!ask <q>`\n' +
-      '`!activity`'
+      '`!meta <hero|role>` · คู่มือเมต้าเจาะลึก & วิเคราะห์ Facet / Innate\n' +
+      '`!build <hero> vs <enemy>` · ไอเทมแก้ทางตามสถานการณ์จริง\n' +
+      '`!combo <hero> with <ally>` · คอมโบเลนคู่และทีมไฟต์\n' +
+      '`!stat` · `!lastmatch` · `!match <id>` · `!watch`\n' +
+      '`!counter [hero]` · `!draft <enemies>` · `!ask <q>`\n' +
+      '`!link <steamId>` · `!join` · `!leave` · `!sound` · `!activity`'
     );
 }
 
@@ -680,6 +751,15 @@ client.once('ready', async () => {
       .setDescription('AI Hero Combo & Lane Partner Guide')
       .addStringOption((o) => o.setName('hero').setDescription('ฮีโร่ที่เราเล่น เช่น juggernaut, magnus').setRequired(true))
       .addStringOption((o) => o.setName('ally').setDescription('ฮีโร่เพื่อนร่วมทีม (ถ้ามี)').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('meta')
+      .setDescription('วิเคราะห์เมต้าแพตช์ปัจจุบันและแนะนำ Facet/Innate เจาะลึกสำหรับฮีโร่หรือตำแหน่ง')
+      .addStringOption((o) =>
+        o
+          .setName('query')
+          .setDescription('ชื่อฮีโร่ (เช่น pa, axe, slark) หรือตำแหน่ง (เช่น carry, mid, offlane, support)')
+          .setRequired(true)
+      ),
     new SlashCommandBuilder().setName('activity').setDescription('Launch Multiplayer Dota 2 Arena'),
     new SlashCommandBuilder().setName('info').setDescription('Commands'),
   ].map((c) => c.toJSON());
@@ -740,6 +820,8 @@ client.on('interactionCreate', async (interaction) => {
   const { commandName } = interaction;
   const replyTarget = {
     isInteraction: true,
+    channel: interaction.channel,
+    followUp: interaction.followUp ? interaction.followUp.bind(interaction) : null,
     reply: interaction.reply.bind(interaction),
     editReply: interaction.editReply.bind(interaction),
     deferReply: interaction.deferReply.bind(interaction),
@@ -783,6 +865,7 @@ client.on('interactionCreate', async (interaction) => {
       replyTarget
     );
   }
+  if (commandName === 'meta') return handleMetaCommand(interaction.options.getString('query') || '', replyTarget);
   if (commandName === 'ask') return handleAskCommand(interaction.options.getString('question'), interaction.user.id, replyTarget);
   if (commandName === 'link') {
     const targetUser = interaction.options.getUser('user') || interaction.user;
@@ -806,7 +889,7 @@ client.on('messageCreate', async (message) => {
 
   const raw = message.content?.trim() || '';
   const lower = raw.toLowerCase();
-  const replyTarget = { isInteraction: false, reply: message.reply.bind(message) };
+  const replyTarget = { isInteraction: false, channel: message.channel, reply: message.reply.bind(message) };
 
   console.log(`[MSG] from="${message.author.tag}" in="${message.channel?.name || 'DM'}" content=${JSON.stringify(raw)}`);
   if (!raw) {
@@ -852,6 +935,10 @@ client.on('messageCreate', async (message) => {
     const hero = parts[0]?.trim();
     const ally = parts[2]?.trim() || '';
     return handleBuildCommand(hero, '', ally, replyTarget);
+  }
+
+  if (lower === '!meta' || lower === '/meta' || lower.startsWith('!meta ') || lower.startsWith('/meta ')) {
+    return handleMetaCommand(raw.replace(/^(!|\/)meta\s*/i, ''), replyTarget);
   }
 
   if (lower.startsWith('!ask ') || lower.startsWith('/ask ')) {
@@ -905,7 +992,7 @@ client.on('messageCreate', async (message) => {
   const matchIdMatch = raw.match(/\b(\d{10})\b/);
   const hasIntentOrMatch =
     Boolean(matchIdMatch) ||
-    /^(วิเคราะห์|ส่อง|เช็ค|ดูฟอร์ม|แก้ทาง|ช่วย|ขอ|บอกหน่อย|สอน|ออกของ|บิลด์|build|combo|คอมโบ)/i.test(raw);
+    /^(วิเคราะห์|ส่อง|เช็ค|ดูฟอร์ม|แก้ทาง|ช่วย|ขอ|บอกหน่อย|สอน|ออกของ|บิลด์|build|combo|คอมโบ|meta|เมต้า|facet|แพตช์|patch)/i.test(raw);
 
   if (isMentioned || isReply || startsWithBot || hasIntentOrMatch || message.channel.isDMBased()) {
     let cleanPrompt = raw
@@ -949,6 +1036,7 @@ client.on('messageCreate', async (message) => {
         onCounterHero: async (hero) => handleCounterCommand(hero, replyTarget),
         onDraftAnalysis: async (heroes) => handleDraftCommand(heroes, message.author.id, replyTarget),
         onRecommendBuild: async (hero, enemies, allies) => handleBuildCommand(hero, enemies, allies, replyTarget),
+        onMetaGuide: async (query) => handleMetaCommand(query, replyTarget),
         onLinkPlayer: async (accId, target) => {
           const targetMention = target ? String(target).match(/\d{17,20}/)?.[0] : null;
           const targetUser = targetMention

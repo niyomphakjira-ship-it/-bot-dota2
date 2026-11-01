@@ -364,6 +364,131 @@ export async function getStatisticalDraftCounters(enemyTokens) {
   };
 }
 
+// Live Hero Meta & Stats Cache from OpenDota /heroStats
+let heroStatsCache = null;
+let heroStatsCacheTime = 0;
+
+export async function fetchAllHeroStats() {
+  const now = Date.now();
+  if (heroStatsCache && now - heroStatsCacheTime < 10 * 60 * 1000) {
+    return heroStatsCache;
+  }
+  const res = await fetch(`${OPENDOTA_BASE}/heroStats`);
+  if (!res.ok) throw new Error(`OpenDota heroStats ${res.status}`);
+  heroStatsCache = await res.json();
+  heroStatsCacheTime = now;
+  return heroStatsCache;
+}
+
+export async function getHeroMetaStats(heroQuery) {
+  const hero = await resolveHeroByQuery(heroQuery);
+  if (!hero) return null;
+
+  const allStats = await fetchAllHeroStats();
+  const s = allStats.find((h) => h.id === hero.id);
+  if (!s) return null;
+
+  const divWins = s['7_win'] || 0;
+  const divPicks = s['7_pick'] || 1;
+  const divWinrate = ((divWins / divPicks) * 100).toFixed(2);
+
+  const pubWins =
+    (s['1_win'] || 0) +
+    (s['2_win'] || 0) +
+    (s['3_win'] || 0) +
+    (s['4_win'] || 0) +
+    (s['5_win'] || 0) +
+    (s['6_win'] || 0) +
+    (s['7_win'] || 0) +
+    (s['8_win'] || 0);
+  const pubPicks =
+    (s['1_pick'] || 0) +
+    (s['2_pick'] || 0) +
+    (s['3_pick'] || 0) +
+    (s['4_pick'] || 0) +
+    (s['5_pick'] || 0) +
+    (s['6_pick'] || 0) +
+    (s['7_pick'] || 0) +
+    (s['8_pick'] || 0);
+  const pubWinrate = pubPicks > 0 ? ((pubWins / pubPicks) * 100).toFixed(2) : 'N/A';
+
+  const proPicks = s.pro_pick || 0;
+  const proWins = s.pro_win || 0;
+  const proWr = proPicks > 0 ? ((proWins / proPicks) * 100).toFixed(1) : 'N/A';
+
+  return {
+    hero: s.localized_name,
+    heroId: s.id,
+    primaryAttr: s.primary_attr?.toUpperCase() || 'N/A',
+    attackType: s.attack_type,
+    roles: s.roles || [],
+    divineWinrate: divWinrate,
+    divinePicks: divPicks,
+    overallWinrate: pubWinrate,
+    overallPicks: pubPicks,
+    proPicks,
+    proWins,
+    proWinrate: proWr,
+    proBans: s.pro_ban || 0,
+  };
+}
+
+export async function getRoleMetaRankings(roleQuery) {
+  const allStats = await fetchAllHeroStats();
+  const q = String(roleQuery || '').trim().toLowerCase();
+
+  let targetRole = 'Carry';
+  let roleTitle = 'Position 1 · Carry (Safe Lane)';
+
+  if (/mid|pos2|เลนกลาง|มิด/i.test(q)) {
+    targetRole = 'Mid';
+    roleTitle = 'Position 2 · Mid Lane';
+  } else if (/offlane|pos3|ออฟเลน|ออฟ/i.test(q)) {
+    targetRole = 'Offlane';
+    roleTitle = 'Position 3 · Offlane';
+  } else if (/pos4|soft support|ซัพ4|โรม/i.test(q)) {
+    targetRole = 'Pos4';
+    roleTitle = 'Position 4 · Soft Support (Roamer)';
+  } else if (/pos5|hard support|ซัพ5|ซัพ/i.test(q)) {
+    targetRole = 'Support';
+    roleTitle = 'Position 5 · Hard Support';
+  }
+
+  const filtered = allStats.filter((h) => {
+    const roles = (h.roles || []).map((r) => r.toLowerCase());
+    const divPicks = h['7_pick'] || 0;
+    if (divPicks < 1500) return false;
+
+    if (targetRole === 'Carry') return roles.includes('carry');
+    if (targetRole === 'Mid') return roles.includes('nuker') || roles.includes('escape') || roles.includes('carry');
+    if (targetRole === 'Offlane') return roles.includes('initiator') || roles.includes('durable');
+    if (targetRole === 'Pos4') return roles.includes('support') || roles.includes('disabler');
+    return roles.includes('support');
+  });
+
+  const ranked = filtered
+    .map((h) => {
+      const wins = h['7_win'] || 0;
+      const picks = h['7_pick'] || 1;
+      const wr = (wins / picks) * 100;
+      return {
+        name: h.localized_name,
+        primaryAttr: h.primary_attr?.toUpperCase(),
+        winrate: wr.toFixed(2),
+        picks: picks,
+        proPicks: h.pro_pick || 0,
+      };
+    })
+    .sort((a, b) => Number(b.winrate) - Number(a.winrate))
+    .slice(0, 8);
+
+  return {
+    role: targetRole,
+    roleTitle,
+    heroes: ranked,
+  };
+}
+
 // Background Match Poller (Auto Match Alerts - checks every 90 seconds)
 export function startMatchWatcher(client, onNewMatch) {
   console.log('[WATCHER] Background Match Poller initialized (Interval: 90s)');
