@@ -493,16 +493,23 @@ async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
     const bannerBuffer = await generateMatchBanner(data, targetQuery).catch(() => null);
     const cardEmbed = buildMatchCardEmbed(data, targetQuery, Boolean(bannerBuffer));
 
-    // Deep AI Debriefing (ผ่าแมตช์เชิงลึก 6 หัวข้อ)
-    const debrief = await analyzePostMatchDebrief(data, targetQuery).catch(() => null);
-    const debriefEmbeds = buildDebriefEmbeds(debrief, null);
-    const embeds = [...debriefEmbeds, cardEmbed];
-
-    const payload = { embeds };
+    const payload = { embeds: [cardEmbed] };
     if (bannerBuffer) {
       payload.files = [new AttachmentBuilder(bannerBuffer, { name: 'match-banner.png' })];
     }
-    return sendReply(replyTarget, payload);
+    await sendReply(replyTarget, payload);
+
+    // Deep AI Debriefing (ผ่าแมตช์เชิงลึก 6 หัวข้อ) - ส่งแยกข้อความเพื่อไม่ให้ชนเพดาน 6,000 ตัวอักษรของ Discord
+    const debrief = await analyzePostMatchDebrief(data, targetQuery).catch(() => null);
+    const debriefEmbeds = buildDebriefEmbeds(debrief, null);
+    for (const emb of debriefEmbeds) {
+      if (replyTarget.isInteraction && replyTarget.followUp) {
+        await replyTarget.followUp({ embeds: [emb] }).catch(() => {});
+      } else if (replyTarget.channel?.send) {
+        await replyTarget.channel.send({ embeds: [emb] }).catch(() => {});
+      }
+    }
+    return;
   } catch (err) {
     return sendReply(replyTarget, { content: `⚠️ ตรวจสอบแมตช์ #${cleanId} ไม่สำเร็จ: ${err.message}` });
   }
@@ -791,15 +798,23 @@ client.once('ready', async () => {
         }
       }
 
-      const embedsToSend = [...debriefEmbeds];
-      if (cardEmbed) embedsToSend.push(cardEmbed);
+      // 3. Send Score Card & Banner first (Message 1)
+      if (cardEmbed) {
+        await channel.send({
+          content: headerText.slice(0, 1990),
+          embeds: [cardEmbed],
+          files: bannerFile ? [bannerFile] : [],
+        }).catch((e) => console.error('[SEND CARD ERROR]:', e.message));
+      } else {
+        await channel.send({ content: headerText.slice(0, 1990) }).catch(() => {});
+      }
 
-      // 3. Send message to channel with Debrief Embed + STRATZ embed card + banner image
-      await channel.send({
-        content: headerText.slice(0, 1990),
-        embeds: embedsToSend,
-        files: bannerFile ? [bannerFile] : [],
-      });
+      // 4. Send Deep AI Debriefing Embed(s) sequentially (Message 2+)
+      for (const emb of debriefEmbeds) {
+        await channel.send({ embeds: [emb] }).catch((e) => {
+          console.error('[SEND DEBRIEF EMBED ERROR]:', e.message);
+        });
+      }
     } catch (alertErr) {
       console.error('[AUTO MATCH ALERT ERROR]:', alertErr);
     }

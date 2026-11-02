@@ -770,7 +770,14 @@ export function startMatchWatcher(client, onNewMatch) {
             playerInfo.lastMatchId = match.matchId;
             dirty = true;
             console.log(`[WATCHER INIT] user=${discordUserId} account=${playerInfo.accountId} lastMatchId=${match.matchId}`);
-            continue;
+
+            // If the match ended recently (within 25 minutes), process it so we don't miss matches during restarts/deployments
+            const nowSec = Math.floor(Date.now() / 1000);
+            const isFresh = match.endedAt && (nowSec - match.endedAt < 25 * 60);
+            if (!isFresh) {
+              continue;
+            }
+            console.log(`[WATCHER FRESH MATCH ON STARTUP] Triggering alert for fresh match #${match.matchId}`);
           }
 
           // New match detected!
