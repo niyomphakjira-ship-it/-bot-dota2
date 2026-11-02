@@ -765,27 +765,27 @@ export function startMatchWatcher(client, onNewMatch) {
           const match = await getLastMatch(playerInfo.accountId);
           if (!match?.matchId) continue;
 
-          // First run for this player: cache the latest match ID so we don't spam old matches
+          let isNew = false;
           if (!playerInfo.lastMatchId) {
             playerInfo.lastMatchId = match.matchId;
             dirty = true;
             console.log(`[WATCHER INIT] user=${discordUserId} account=${playerInfo.accountId} lastMatchId=${match.matchId}`);
 
-            // If the match ended recently (within 25 minutes), process it so we don't miss matches during restarts/deployments
+            // If the match ended recently (within 35 minutes), process it so we don't miss matches during restarts/deployments
             const nowSec = Math.floor(Date.now() / 1000);
-            const isFresh = match.endedAt && (nowSec - match.endedAt < 25 * 60);
-            if (!isFresh) {
-              continue;
+            const isFresh = match.endedAt && (nowSec - match.endedAt < 35 * 60);
+            if (isFresh) {
+              console.log(`[WATCHER FRESH MATCH ON STARTUP] Triggering alert for fresh match #${match.matchId}`);
+              isNew = true;
             }
-            console.log(`[WATCHER FRESH MATCH ON STARTUP] Triggering alert for fresh match #${match.matchId}`);
-          }
-
-          // New match detected!
-          if (String(match.matchId) !== String(playerInfo.lastMatchId)) {
+          } else if (String(match.matchId) !== String(playerInfo.lastMatchId)) {
             console.log(`[WATCHER NEW MATCH] user=${discordUserId} newMatchId=${match.matchId} (old=${playerInfo.lastMatchId})`);
             playerInfo.lastMatchId = match.matchId;
             dirty = true;
+            isNew = true;
+          }
 
+          if (isNew) {
             for (const [, channelId] of guildChannelEntries) {
               const ch = await client.channels.fetch(channelId).catch(() => null);
               if (ch && ch.isTextBased()) {
