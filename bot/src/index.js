@@ -335,7 +335,8 @@ function buildMatchEmbed(titlePrefix, match) {
 async function handleLastMatchCommand(discordUserId, rawArg, replyTarget) {
   const accountId = resolveTargetAccount(discordUserId, rawArg);
   if (!accountId) {
-    const msg = 'ยังไม่ได้ผูกไอดี (`!link <friend_id>`)';
+    const msg =
+      '⚠️ ยังไม่ได้ผูกไอดี Dota 2 ครับ! ผูกไอดีง่ายๆ พิมพ์เช่น `!link 947857860` หรือระบุไอดีเพื่อน `!lastmatch 947857860` หรือ `!lastmatch @เพื่อน` หรือพิมพ์ "ดูแมตช์ล่าสุด"';
     return replyTarget.isInteraction
       ? replyTarget.reply({ content: msg, flags: 64 })
       : replyTarget.reply(msg);
@@ -344,9 +345,13 @@ async function handleLastMatchCommand(discordUserId, rawArg, replyTarget) {
   await deferIfNeeded(replyTarget);
   try {
     const match = await getLastMatch(accountId);
-    return sendReply(replyTarget, { embeds: [buildMatchEmbed('', match)] });
+    if (!match?.matchId) {
+      return sendReply(replyTarget, { content: '⚠️ ไม่พบประวัติแมตช์ล่าสุดของผู้เล่นคนนี้ครับ' });
+    }
+    // ส่งต่อไปยัง handleInspectMatchCommand เพื่อแสดงผลทั้งการ์ดสถิติ STRATZ, แบนเนอร์ และรายงานผ่าแมตช์เชิงลึก 6 หัวข้อ
+    return handleInspectMatchCommand(match.matchId, match.hero, replyTarget);
   } catch (err) {
-    return sendReply(replyTarget, { content: err.message });
+    return sendReply(replyTarget, { content: `⚠️ ดึงข้อมูลแมตช์ล่าสุดไม่สำเร็จ: ${err.message}` });
   }
 }
 
@@ -740,85 +745,91 @@ function buildInfoEmbed() {
     .setColor(THEME.dark)
     .setTitle('💙 SleepKnight Dota 2 Bot & AI Coach')
     .setDescription(
-      '`!roadmap [@friend]` · สมุดพกประเมินเกรด (S/A/B/C) & แผนพัฒนาฝีมือ\n' +
-      '`!meta <hero|role>` · คู่มือเมต้าเจาะลึก & วิเคราะห์ Facet / Innate\n' +
-      '`!build <hero> vs <enemy>` · ไอเทมแก้ทางตามสถานการณ์จริง\n' +
-      '`!combo <hero> with <ally>` · คอมโบเลนคู่และทีมไฟต์\n' +
-      '`!stat` · `!lastmatch` · `!match <id>` · `!watch`\n' +
-      '`!counter [hero]` · `!draft <enemies>` · `!ask <q>`\n' +
-      '`!link <steamId>` · `!join` · `!leave` · `!sound` · `!activity`'
+      '**⚔️ คำสั่งยอดนิยม & AI วิเคราะห์:**\n' +
+      '• **ดูแมตช์ล่าสุด:** พิมพ์ `"ดูแมตช์ล่าสุด"` · `!lastmatch` · `!match` (ผ่าฟอร์ม 6 หัวข้อ + การ์ดสถิติ)\n' +
+      '• `!roadmap [@friend]` · สมุดพกประเมินเกรด (S/A/B/C) & แผนพัฒนาฝีมือ\n' +
+      '• `!meta <hero|role>` · คู่มือเมต้าเจาะลึก & วิเคราะห์ Facet / Innate\n' +
+      '• `!build <hero> vs <enemy>` · ไอเทมแก้ทางตามสถานการณ์จริง\n' +
+      '• `!combo <hero> with <ally>` · คอมโบเลนคู่และทีมไฟต์\n' +
+      '• `!stat` · `!match <id>` · `!counter [hero]` · `!draft <enemies>`\n' +
+      '• `!link <steamId>` · `!join` · `!leave` · `!sound` · `!activity`'
     );
 }
 
 client.once('ready', async () => {
   console.log(`🤖 Logged in as: ${client.user.tag}`);
 
-  // Start Automatic Match Alert Poller with STRATZ deep card & savage AI roast
-  startMatchWatcher(client, async (channel, discordUserId, match) => {
-    try {
-      console.log(`[AUTO MATCH ALERT] Triggered for user ${discordUserId}, match #${match.matchId}`);
+  // Automatic Match Alert Poller (Disabled by default per user request - On-demand mode is active)
+  const AUTO_MATCH_WATCHER_ENABLED = process.env.AUTO_MATCH_WATCHER === 'true';
+  if (AUTO_MATCH_WATCHER_ENABLED) {
+    startMatchWatcher(client, async (channel, discordUserId, match) => {
+      try {
+        console.log(`[AUTO MATCH ALERT] Triggered for user ${discordUserId}, match #${match.matchId}`);
 
-      // 1. Fetch full match details with STRATZ analytics and banner image
-      const matchData = await getMatchById(match.matchId).catch(() => null);
+        // 1. Fetch full match details with STRATZ analytics and banner image
+        const matchData = await getMatchById(match.matchId).catch(() => null);
 
-      let cardEmbed = null;
-      let extraStats = '';
-      let bannerFile = null;
+        let cardEmbed = null;
+        let extraStats = '';
+        let bannerFile = null;
 
-      if (matchData) {
-        const bannerBuffer = await generateMatchBanner(matchData, match.hero).catch(() => null);
-        if (bannerBuffer) {
-          bannerFile = new AttachmentBuilder(bannerBuffer, { name: 'match-banner.png' });
+        if (matchData) {
+          const bannerBuffer = await generateMatchBanner(matchData, match.hero).catch(() => null);
+          if (bannerBuffer) {
+            bannerFile = new AttachmentBuilder(bannerBuffer, { name: 'match-banner.png' });
+          }
+          cardEmbed = buildMatchCardEmbed(matchData, match.hero, Boolean(bannerBuffer));
+          const player = matchData.players?.find((p) => p.hero.toLowerCase() === match.hero.toLowerCase());
+          if (player) {
+            const supDetails = (player.obsPlaced || player.dewards || player.campsStacked || player.role?.includes('SUPPORT'))
+              ? ` · Wards: ปัก Obs ${player.obsPlaced || 0} / Sen ${player.senPlaced || 0}, แก้หวอด ${player.dewards || 0}, สแต็ก ${player.campsStacked || 0} กอง, ฮีล ${(player.heroHealing || 0).toLocaleString()} HP`
+              : '';
+            extraStats = `\nสถิติของผู้เล่น: ฮีโร่ ${player.hero}, Role=${player.role || 'N/A'}, ผล=${player.won ? 'ชนะ' : 'แพ้'}, KDA=${player.kda}, Damage=${(player.heroDamage || 0).toLocaleString()}, NW=${(player.networth || 0).toLocaleString()}, GPM=${player.gpm || 0}, CS=${player.lastHits || 0}/${player.denies || 0}, STRATZ IMP=${player.imp !== null ? player.imp : 'N/A'}${supDetails}`;
+          }
+        } else {
+          cardEmbed = buildMatchEmbed('🚨 ', match);
         }
-        cardEmbed = buildMatchCardEmbed(matchData, match.hero, Boolean(bannerBuffer));
-        const player = matchData.players?.find((p) => p.hero.toLowerCase() === match.hero.toLowerCase());
-        if (player) {
-          const supDetails = (player.obsPlaced || player.dewards || player.campsStacked || player.role?.includes('SUPPORT'))
-            ? ` · Wards: ปัก Obs ${player.obsPlaced || 0} / Sen ${player.senPlaced || 0}, แก้หวอด ${player.dewards || 0}, สแต็ก ${player.campsStacked || 0} กอง, ฮีล ${(player.heroHealing || 0).toLocaleString()} HP`
-            : '';
-          extraStats = `\nสถิติของผู้เล่น: ฮีโร่ ${player.hero}, Role=${player.role || 'N/A'}, ผล=${player.won ? 'ชนะ' : 'แพ้'}, KDA=${player.kda}, Damage=${(player.heroDamage || 0).toLocaleString()}, NW=${(player.networth || 0).toLocaleString()}, GPM=${player.gpm || 0}, CS=${player.lastHits || 0}/${player.denies || 0}, STRATZ IMP=${player.imp !== null ? player.imp : 'N/A'}${supDetails}`;
+
+        // 2. Generate Deep Post-Match Debrief with AI Coach
+        const isDiscordUser = /^\d{17,20}$/.test(String(discordUserId));
+        const playerName = matchData?.players?.find((p) => p.hero.toLowerCase() === match.hero.toLowerCase())?.name || 'เพื่อนในตี้';
+        const playerTag = isDiscordUser ? `<@${discordUserId}>` : `**${playerName}**`;
+
+        let headerText = `🚨 **[MATCH DEBRIEF] ผ่าฟอร์มหลังจบเกมสดๆ ร้อนๆ!** ${playerTag} เพิ่งเล่น **${match.hero}** จบในแมตช์ \`#${match.matchId}\` (${match.won ? '🏆 ชนะ' : '💀 แพ้'})!`;
+        let debriefEmbeds = [];
+        if (matchData) {
+          try {
+            const debrief = await analyzePostMatchDebrief(matchData, match.hero, playerName);
+            debriefEmbeds = buildDebriefEmbeds(debrief, match);
+          } catch (_aiErr) {
+            console.error('[AI DEBRIEF ERROR]:', _aiErr.message);
+          }
         }
-      } else {
-        cardEmbed = buildMatchEmbed('🚨 ', match);
-      }
 
-      // 2. Generate Deep Post-Match Debrief with AI Coach
-      const isDiscordUser = /^\d{17,20}$/.test(String(discordUserId));
-      const playerName = matchData?.players?.find((p) => p.hero.toLowerCase() === match.hero.toLowerCase())?.name || 'เพื่อนในตี้';
-      const playerTag = isDiscordUser ? `<@${discordUserId}>` : `**${playerName}**`;
-
-      let headerText = `🚨 **[MATCH DEBRIEF] ผ่าฟอร์มหลังจบเกมสดๆ ร้อนๆ!** ${playerTag} เพิ่งเล่น **${match.hero}** จบในแมตช์ \`#${match.matchId}\` (${match.won ? '🏆 ชนะ' : '💀 แพ้'})!`;
-      let debriefEmbeds = [];
-      if (matchData) {
-        try {
-          const debrief = await analyzePostMatchDebrief(matchData, match.hero, playerName);
-          debriefEmbeds = buildDebriefEmbeds(debrief, match);
-        } catch (_aiErr) {
-          console.error('[AI DEBRIEF ERROR]:', _aiErr.message);
+        // 3. Send Score Card & Banner first (Message 1)
+        if (cardEmbed) {
+          await channel.send({
+            content: headerText.slice(0, 1990),
+            embeds: [cardEmbed],
+            files: bannerFile ? [bannerFile] : [],
+          }).catch((e) => console.error('[SEND CARD ERROR]:', e.message));
+        } else {
+          await channel.send({ content: headerText.slice(0, 1990) }).catch(() => {});
         }
-      }
 
-      // 3. Send Score Card & Banner first (Message 1)
-      if (cardEmbed) {
-        await channel.send({
-          content: headerText.slice(0, 1990),
-          embeds: [cardEmbed],
-          files: bannerFile ? [bannerFile] : [],
-        }).catch((e) => console.error('[SEND CARD ERROR]:', e.message));
-      } else {
-        await channel.send({ content: headerText.slice(0, 1990) }).catch(() => {});
+        // 4. Send Deep AI Debriefing Embed(s) sequentially (Message 2+)
+        for (const emb of debriefEmbeds) {
+          await channel.send({ embeds: [emb] }).catch((e) => {
+            console.error('[SEND DEBRIEF EMBED ERROR]:', e.message);
+          });
+        }
+      } catch (alertErr) {
+        console.error('[AUTO MATCH ALERT ERROR]:', alertErr);
       }
-
-      // 4. Send Deep AI Debriefing Embed(s) sequentially (Message 2+)
-      for (const emb of debriefEmbeds) {
-        await channel.send({ embeds: [emb] }).catch((e) => {
-          console.error('[SEND DEBRIEF EMBED ERROR]:', e.message);
-        });
-      }
-    } catch (alertErr) {
-      console.error('[AUTO MATCH ALERT ERROR]:', alertErr);
-    }
-  });
+    });
+  } else {
+    console.log('🔕 [WATCHER] Automatic Match Alerts are DISABLED per user request. On-demand mode is active: users can type "ดูแมตช์ล่าสุด", !lastmatch, or !match.');
+  }
 
   const slashCommands = [
     new SlashCommandBuilder().setName('ping').setDescription('Check latency'),
@@ -1007,7 +1018,13 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (commandName === 'stat') return handleStatCommand(interaction.user.id, interaction.options.getString('id') || '', replyTarget);
   if (commandName === 'lastmatch') return handleLastMatchCommand(interaction.user.id, interaction.options.getString('id') || '', replyTarget);
-  if (commandName === 'match') return handleInspectMatchCommand(interaction.options.getString('id') || '', '', replyTarget);
+  if (commandName === 'match') {
+    const rawId = interaction.options.getString('id') || '';
+    if (!rawId || !/\d{8,12}/.test(rawId)) {
+      return handleLastMatchCommand(interaction.user.id, rawId, replyTarget);
+    }
+    return handleInspectMatchCommand(rawId, '', replyTarget);
+  }
   if (commandName === 'watch') {
     setWatchChannel(interaction.guildId, interaction.channelId);
     return interaction.reply({
@@ -1100,12 +1117,26 @@ client.on('messageCreate', async (message) => {
     return handleStatCommand(message.author.id, raw.replace(/^(!|\/)stat\s*/i, ''), replyTarget);
   }
 
-  if (lower === '!lastmatch' || lower === '/lastmatch' || lower.startsWith('!lastmatch ') || lower.startsWith('/lastmatch ')) {
-    return handleLastMatchCommand(message.author.id, raw.replace(/^(!|\/)lastmatch\s*/i, ''), replyTarget);
+  const isMatchInspectExplicit = /^\s*(!|\/)?match\s+\d{8,12}\b/i.test(raw);
+  const isLastMatchIntent =
+    /^(บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท|น้องบอท)?\s*(ช่วย|ขอ)?\s*(ดู|ส่อง|เช็ค|ตรวจ|วิเคราะห์|สรุป|รายงาน)?\s*(แมตช์|แมต|เกม|ฟอร์ม|match|game)\s*(ล่าสุด|ที่แล้ว|เมื่อกี้|มะกี้)/i.test(lower) ||
+    /^(บอท|bot)?\s*(แมตช์|แมต|เกม|ฟอร์ม)\s*(ล่าสุด|ที่แล้ว|เมื่อกี้|มะกี้)/i.test(lower) ||
+    /^(บอท|bot)?\s*(ล่าสุด|lastmatch|last\s*match)$/i.test(lower) ||
+    lower === '!lastmatch' || lower === '/lastmatch' || lower.startsWith('!lastmatch ') || lower.startsWith('/lastmatch ') ||
+    lower === '!match' || lower === '/match' || lower === '!last' || lower === '/last' ||
+    ((lower.startsWith('!match ') || lower.startsWith('/match ')) && !isMatchInspectExplicit);
+
+  if (isMatchInspectExplicit) {
+    return handleInspectMatchCommand(raw.replace(/^(!|\/)match\s*/i, ''), raw, replyTarget);
   }
 
-  if (lower.startsWith('!match ') || lower.startsWith('/match ')) {
-    return handleInspectMatchCommand(raw.replace(/^(!|\/)match\s*/i, ''), raw, replyTarget);
+  if (isLastMatchIntent) {
+    const cleanArg = raw
+      .replace(/^(!|\/)(lastmatch|last|match)\s*/i, '')
+      .replace(/^(บอท|bot|เห้ยบอท|ไอ้บอท|พี่บอท|น้องบอท)?\s*(ช่วย|ขอ)?\s*(ดู|ส่อง|เช็ค|ตรวจ|วิเคราะห์|สรุป|รายงาน)?\s*(แมตช์|แมต|เกม|ฟอร์ม|match|game)\s*(ล่าสุด|ที่แล้ว|เมื่อกี้|มะกี้)[,\s:]*/i, '')
+      .replace(/^(บอท|bot)[,\s:]*/i, '')
+      .trim();
+    return handleLastMatchCommand(message.author.id, cleanArg, replyTarget);
   }
 
   if (lower === '!watch' || lower === '/watch') {
