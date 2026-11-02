@@ -515,6 +515,104 @@ export async function generatePlayerRoadmap(perf, playerName) {
   }
 }
 
+// 7. Deep Post-Match Debriefing Engine (ผ่าแมตช์เชิงลึก 6 หัวข้อทันทีหลังเล่นจบ)
+export async function analyzePostMatchDebrief(matchData, targetPlayerHero = '', playerName = '') {
+  if (!matchData || !Array.isArray(matchData.players) || matchData.players.length === 0) {
+    return { text: 'ไม่พบข้อมูลแมตช์สำหรับวิเคราะห์' };
+  }
+
+  const query = String(targetPlayerHero || '').trim().toLowerCase();
+  let p = null;
+  if (query) {
+    p = matchData.players.find(
+      (x) => x.hero?.toLowerCase().includes(query) || x.name?.toLowerCase().includes(query)
+    );
+  }
+  if (!p) {
+    p = [...matchData.players].sort((a, b) => (b.won ? 1 : 0) - (a.won ? 1 : 0) || b.heroDamage - a.heroDamage)[0];
+  }
+
+  // Find direct lane opponent if available
+  const laneOpponents = (matchData.players || []).filter(
+    (x) => x.team !== p.team && x.lane && x.lane === p.lane
+  );
+  const laneOpponentStr =
+    laneOpponents.length > 0
+      ? laneOpponents
+          .map(
+            (o) =>
+              `${o.hero} (KDA ${o.kda}, CS ${o.lastHits || 0}/${o.denies || 0}, NW ${o.networth?.toLocaleString() || 0})`
+          )
+          .join(', ')
+      : 'ไม่ระบุชัดเจน';
+
+  // Top performers
+  const topDamagers = [...(matchData.players || [])]
+    .sort((a, b) => b.heroDamage - a.heroDamage)
+    .slice(0, 3)
+    .map((x) => `${x.hero} (${x.team}, KDA ${x.kda}, Dmg ${x.heroDamage?.toLocaleString() || 0})`)
+    .join(', ');
+
+  const isWin = p.won;
+  const isSpicy =
+    p.archetype?.includes('Carried') ||
+    p.archetype?.includes('Rough') ||
+    (p.imp !== null && p.imp <= -10) ||
+    (p.deaths >= 8 && p.kills <= 3);
+
+  const prompt =
+    `[คำขอผ่าฟอร์มการเล่นเจาะลึกหลังจบแมตช์ Dota 2 (Deep Post-Match Debrief)]:\n` +
+    `แมตช์: #${matchData.matchId} (เวลาเกม: ${matchData.duration})\n` +
+    `ผลการแข่งขัน: ${matchData.radiantWin ? 'Radiant ชนะ' : 'Dire ชนะ'} (สกอร์รวม: Radiant ${matchData.radiantScore} - ${matchData.direScore} Dire)\n` +
+    `ผู้เล่นเป้าหมาย: ${playerName || p.name} (${p.hero}, ทีม ${p.team})\n` +
+    `- ผลลัพธ์ส่วนตัว: ${isWin ? '🏆 ชนะ (Victory)' : '💀 แพ้ (Defeat)'}\n` +
+    `- สถิติ KDA: ${p.kda} (Kills: ${p.kills}, Deaths: ${p.deaths}, Assists: ${p.assists})\n` +
+    `- การเงิน & ฟาร์ม: Networth ${p.networth?.toLocaleString()} (คิดเป็น ${p.nwShare}% ของทีม), GPM ${p.gpm}, CS ${p.lastHits}/${p.denies}\n` +
+    `- ดาเมจ & ไฟต์: Hero Damage ${p.heroDamage?.toLocaleString()} (คิดเป็น ${p.dmgShare}% ของทีม)\n` +
+    `- ดัชนีความคุ้มค่าเงินเป็นดาเมจ (DER): ${p.der} (ค่าปกติ = 1.0, > 1.25 คือคุ้มค่ามาก, < 0.65 คือกินเงินฟรี)\n` +
+    `- การมีส่วนร่วมในคิล (Kill Participation - KP%): ${p.kp}%\n` +
+    `- ตำแหน่งการยืนเลน: ${p.lane || 'N/A'}, บทบาท (Role): ${p.role || 'N/A'}\n` +
+    `- คู่แข่งในเลนเดียวกันฝั่งตรงข้าม: ${laneOpponentStr}\n` +
+    `- STRATZ IMP Score: ${p.imp !== null ? `${p.imp > 0 ? '+' : ''}${p.imp} (${p.impComment || ''})` : 'N/A'}\n` +
+    `- การเล่นเพื่อทีม/วิชั่น: ปัก Obs ${p.obsPlaced || 0}, Sen ${p.senPlaced || 0}, แก้หวอด ${p.dewards || 0}, สแต็ก ${p.campsStacked || 0} กอง, ฮีล ${p.heroHealing || 0} HP\n` +
+    `- สถานะการประเมินเบื้องต้น (Archetype): ${p.archetype}\n` +
+    `- ผู้เล่นที่ทำดาเมจสูงสุดในเกม 3 อันดับแรก: ${topDamagers}\n\n` +
+    (isSpicy
+      ? `🌶️ **[คำเตือนพิเศษ: ผู้เล่นคนนี้ฟอร์มหลุด / โดนเพื่อนแบกหลังหัก / เล่นแจก - เปิดโหมดปากแซ่บสับแหลก (Savage Roast Mode)]**:\n` +
+        `- สับแหลก จิกกัดแสบๆ คันๆ ตลกร้าย คมกริบ และกวนประสาทอย่างมีชั้นเชิง อิงสถิติจริง (Fact-Based Savage Roast) เช่น แซะเรื่องฟาร์มจนครีปไหว้แต่ดาเมจน้อยกว่าซัพ, ซื้อ BKB มาตั้งโชว์, เดินแจกในป่ามืด, หรือชนะเพราะหลังเพื่อนหักจนต้องเข้าเฝือก\n` +
+        `- แต่ตบท้ายด้วยการบ้าน 2 ข้อเพื่อชี้ทางสว่างอย่างมืออาชีพเสมอ!\n\n`
+      : `✨ **[โหมดผู้เล่นฟอร์มเทพ / แบกทีม / Unlucky Ace]**: ยกย่องอย่างสมเกียรติ สุภาพ คมคาย ชื่นชมจังหวะการเล่นที่เฉียบขาด\n\n`) +
+    `[คำสั่ง]: ในฐานะยอดโค้ช AI Dota 2 (ทนายโตต้า) ประจำกิลด์ SleepKnight Gaming ให้เขียน "รายงานผ่าแมตช์เชิงลึกหลังจบเกม (Post-Match Debrief)" ของผู้เล่นคนนี้อย่างเข้มข้น จัดเต็ม 6 หัวข้อดังนี้:\n\n` +
+    `🎖️ **เกรดและฉายาประจำแมตช์ (Match Grade & Title)**: ระบุเกรด (S / A / B / C) พร้อมฉายาคมๆ ที่สะท้อนเนื้อเกมจริงของเขาในแมตช์นี้\n` +
+    `📊 **ดัชนีเนื้อเกมจริง (Match Telemetry)**: ผ่าสถิติค่า DER (${p.der}), KP% (${p.kp}%), การเงิน และการมีส่วนร่วมในไฟต์อย่างตรงไปตรงมา\n` +
+    `⚔️ **เจาะลึกไทม์ไลน์ 3 ช่วง (Game Flow & Execution)**:\n` +
+    `• 🌾 **0-10 นาที (Laning Phase):** ผลการยืนเลน เทียบกับคู่แข่งในเลน (${laneOpponentStr}) ชนะหรือแพ้เลน คุมรูน/ตัดเวฟยังไง\n` +
+    `• ⚡ **10-25 นาที (Mid Game & Teamfights):** จังหวะทีมไฟต์ ไทมิ่งไอเทมชิ้นหลัก และการสร้างพื้นที่หรือสโนว์บอล\n` +
+    `• 🏰 **25 นาที+ (Objectives & Endgame):** การปิดเกม, การดันป้อม, การคุม Roshan หรือจังหวะเสียเปรียบ\n` +
+    `🔍 **จุดเด่นที่เป็นหัวใจ vs ข้อผิดพลาดระดับไมโคร (Key Plays & Micro Flaws)**: ชี้จุดที่ทำได้ยอดเยี่ยม และชี้จุดสะกิดใจที่พลาด (เช่น การตาย ${p.deaths} ครั้งว่าเกิดจากอะไร)\n` +
+    `🛡️ **การออกของและดราฟต์แก้ทาง (Itemization & Draft Audit)**: วิเคราะห์แนวทางการออกของและดราฟต์ในเกมนี้\n` +
+    `🎯 **การบ้าน 2 ข้อสำหรับเกมถัดไป (Next Game Focus)**: ข้อควรปฏิบัติที่เป็นรูปธรรม 2 ข้อในการลงแรงค์เกมต่อไป\n\n` +
+    `ตอบเป็นภาษาไทย ละเอียด คมคาย มีความเป็นมืออาชีพ และเน้นพัฒนาผู้เล่นจริง (ความยาวประมาณ 1,200 - 1,800 ตัวอักษร)`;
+
+  try {
+    const { res } = await generateWithFallback({
+      prompt,
+      systemInstruction: SYSTEM_INSTRUCTION,
+    });
+    return {
+      matchData,
+      player: p,
+      text: res.text || 'ไม่สามารถสร้างบทวิเคราะห์ได้ในขณะนี้',
+    };
+  } catch (err) {
+    return {
+      matchData,
+      player: p,
+      text: `⚠️ ระบบ AI ขัดข้อง: ${err.message}`,
+    };
+  }
+}
+
 // ระบบ Autonomous AI Agent: รองรับ Function Calling + บริบทแชทย้อนหลัง + บริบทสถิติสด + บทสนทนาตอบกลับทันใจ (< 2 วินาที)
 export async function runAutonomousAgent(userInput, discordUserId, actions, chatHistory = [], extraContext = '') {
   const client = getClient();

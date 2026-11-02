@@ -46,6 +46,7 @@ import {
   analyzeHeroMetaGuide,
   analyzeRoleMetaOverview,
   generatePlayerRoadmap,
+  analyzePostMatchDebrief,
   runAutonomousAgent,
 } from './ai-coach.js';
 import { generateMatchBanner } from './match-image.js';
@@ -445,6 +446,43 @@ async function fetchMatchWithRetry(matchId, retries = 2) {
   return null;
 }
 
+function buildDebriefEmbeds(debrief, fallbackPlayer) {
+  if (!debrief?.text || debrief.text.includes('ระบบ AI')) return [];
+  const p = debrief.player || fallbackPlayer;
+  const embedColor = p?.won ? THEME.win : THEME.loss;
+  const title = `📋 รายงานผ่าแมตช์เชิงลึก · ${p?.hero || 'Match'} (${p?.name || 'Player'})`;
+  const text = debrief.text.trim();
+
+  if (text.length <= 3900) {
+    const embed = new EmbedBuilder()
+      .setColor(embedColor)
+      .setTitle(title)
+      .setDescription(text)
+      .setFooter({ text: 'SleepKnight AI Telemetry Coach · Deep Match Debriefing' });
+    return [embed];
+  }
+
+  let splitIdx = text.lastIndexOf('\n### ', 3700);
+  if (splitIdx < 1500) splitIdx = text.lastIndexOf('\n\n', 3700);
+  if (splitIdx < 1000) splitIdx = 3700;
+
+  const part1 = text.slice(0, splitIdx).trim();
+  const part2 = text.slice(splitIdx).trim();
+
+  const embed1 = new EmbedBuilder()
+    .setColor(embedColor)
+    .setTitle(`${title} (ตอนที่ 1/2)`)
+    .setDescription(part1);
+
+  const embed2 = new EmbedBuilder()
+    .setColor(embedColor)
+    .setTitle(`${title} (ตอนที่ 2/2)`)
+    .setDescription(part2.slice(0, 3950))
+    .setFooter({ text: 'SleepKnight AI Telemetry Coach · Deep Match Debriefing' });
+
+  return [embed1, embed2];
+}
+
 async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
   const cleanId = String(matchId || '').match(/\d{8,12}/)?.[0];
   if (!cleanId) return;
@@ -453,8 +491,14 @@ async function handleInspectMatchCommand(matchId, targetQuery, replyTarget) {
   try {
     const data = await getMatchById(cleanId);
     const bannerBuffer = await generateMatchBanner(data, targetQuery).catch(() => null);
-    const embed = buildMatchCardEmbed(data, targetQuery, Boolean(bannerBuffer));
-    const payload = { embeds: [embed] };
+    const cardEmbed = buildMatchCardEmbed(data, targetQuery, Boolean(bannerBuffer));
+
+    // Deep AI Debriefing (ผ่าแมตช์เชิงลึก 6 หัวข้อ)
+    const debrief = await analyzePostMatchDebrief(data, targetQuery).catch(() => null);
+    const debriefEmbeds = buildDebriefEmbeds(debrief, null);
+    const embeds = [...debriefEmbeds, cardEmbed];
+
+    const payload = { embeds };
     if (bannerBuffer) {
       payload.files = [new AttachmentBuilder(bannerBuffer, { name: 'match-banner.png' })];
     }
@@ -731,34 +775,29 @@ client.once('ready', async () => {
         cardEmbed = buildMatchEmbed('🚨 ', match);
       }
 
-      // 2. Generate a savage AI roast from Gemini
+      // 2. Generate Deep Post-Match Debrief with AI Coach
       const isDiscordUser = /^\d{17,20}$/.test(String(discordUserId));
       const playerName = matchData?.players?.find((p) => p.hero.toLowerCase() === match.hero.toLowerCase())?.name || 'เพื่อนในตี้';
       const playerTag = isDiscordUser ? `<@${discordUserId}>` : `**${playerName}**`;
 
-      let roastText = `🚨 **จบแมตช์ใหม่สดๆ ร้อนๆ!** ${playerTag} เพิ่งเล่น **${match.hero}** จบในแมตช์ \`#${match.matchId}\` (${match.won ? '🏆 ชนะ' : '💀 แพ้'})!`;
-
-      try {
-        const aiPrompt =
-          `[เหตุการณ์]: ผู้เล่น ${playerTag} เพิ่งเล่นแมตช์ Dota 2 จบสดๆ ร้อนๆ!\n` +
-          `แมตช์ #${match.matchId}\n` +
-          `ฮีโร่: ${match.hero}\n` +
-          `ผลการแข่งขัน: ${match.won ? 'ชนะ (Victory)' : 'แพ้ (Defeat)'}\n` +
-          `KDA: ${match.kills}/${match.deaths}/${match.assists}\n` +
-          `GPM: ${match.gpm}, XPM: ${match.xpm}, ดาเมจ: ${match.heroDamage}\n` +
-          `${extraStats}\n\n` +
-          `[คำสั่ง]: ในฐานะโค้ช AI Dota 2 อัจฉริยะประจำกิลด์ SleepKnight Gaming ให้เขียนข้อความสรุปผลงาน 2-3 ประโยคเป็นภาษาไทยแบบมืออาชีพ สุภาพ เป็นกันเอง ชี้จุดเด่น/สิ่งที่ควรปรับเพื่อพัฒนาการเล่น และให้กำลังใจผู้เล่นคนนี้อย่างอบอุ่น (ไม่ต้องยาวเกินไป)`;
-
-        const res = await askDotaCoach(aiPrompt, isDiscordUser ? discordUserId : 'general');
-        if (res?.text && !res.text.includes('ระบบ AI')) {
-          roastText = `🚨 ${playerTag}\n${res.text}`;
+      let headerText = `🚨 **[MATCH DEBRIEF] ผ่าฟอร์มหลังจบเกมสดๆ ร้อนๆ!** ${playerTag} เพิ่งเล่น **${match.hero}** จบในแมตช์ \`#${match.matchId}\` (${match.won ? '🏆 ชนะ' : '💀 แพ้'})!`;
+      let debriefEmbeds = [];
+      if (matchData) {
+        try {
+          const debrief = await analyzePostMatchDebrief(matchData, match.hero, playerName);
+          debriefEmbeds = buildDebriefEmbeds(debrief, match);
+        } catch (_aiErr) {
+          console.error('[AI DEBRIEF ERROR]:', _aiErr.message);
         }
-      } catch (_aiErr) {}
+      }
 
-      // 3. Send message to channel with both roast commentary and STRATZ embed card + banner image
+      const embedsToSend = [...debriefEmbeds];
+      if (cardEmbed) embedsToSend.push(cardEmbed);
+
+      // 3. Send message to channel with Debrief Embed + STRATZ embed card + banner image
       await channel.send({
-        content: roastText.slice(0, 1990),
-        embeds: cardEmbed ? [cardEmbed] : [],
+        content: headerText.slice(0, 1990),
+        embeds: embedsToSend,
         files: bannerFile ? [bannerFile] : [],
       });
     } catch (alertErr) {
